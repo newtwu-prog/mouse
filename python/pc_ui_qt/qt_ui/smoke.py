@@ -149,6 +149,9 @@ def _check_labels(window: MainWindow) -> None:
     assert window.groups_page.table.item(0, 9).text() == "CH0"
     assert window.groups_page.btn_confirm.text() == "套用設定"
     assert window.findChild(QLabel, "statusChip").text()
+    labels = [label.text() for label in window.findChildren(QLabel)]
+    assert "port" in labels
+    assert "埠" not in labels
     assert window.port.text() == "7001"
     assert window.settings.autoscale.isChecked() is False
     assert window.settings.autoscale.text() == "Y軸自動縮放"

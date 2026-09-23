@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtWidgets import QApplication, QComboBox
+
 FONT_FAMILIES = (
     "Microsoft JhengHei UI",
     "Microsoft JhengHei",
@@ -67,6 +70,28 @@ QLineEdit:read-only {
 QComboBox::drop-down {
     border: none;
     width: 18px;
+}
+QComboBox QAbstractItemView {
+    background: #ffffff;
+    color: #1e293b;
+    border: 1px solid #cbd5e1;
+    selection-background-color: #dbeafe;
+    selection-color: #1e293b;
+    outline: 0;
+}
+QComboBox QAbstractItemView::item {
+    min-height: 22px;
+    padding: 3px 8px;
+    background: #ffffff;
+    color: #1e293b;
+}
+QComboBox QAbstractItemView::item:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+QComboBox QAbstractItemView::item:selected {
+    background: #dbeafe;
+    color: #1e293b;
 }
 QPushButton {
     background: #f8fafc;
@@ -225,3 +250,55 @@ QSplitter#chartSplitter::handle {
     border-radius: 2px;
 }
 """
+
+_POPUP_VIEW = """
+QAbstractItemView {
+    background: #ffffff;
+    color: #1e293b;
+    selection-background-color: #dbeafe;
+    selection-color: #1e293b;
+    outline: 0;
+}
+QAbstractItemView::item {
+    background: #ffffff;
+    color: #1e293b;
+    min-height: 22px;
+    padding: 3px 8px;
+}
+QAbstractItemView::item:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+QAbstractItemView::item:selected {
+    background: #dbeafe;
+    color: #1e293b;
+}
+"""
+
+
+def apply_light_palette(app: QApplication) -> None:
+    """Keep combo popups light. A styled QComboBox otherwise paints a black list on Windows."""
+    palette = app.palette()
+    palette.setColor(QPalette.ColorRole.Window, QColor("#e8eef4"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#1e293b"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#f8fafc"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#1e293b"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#f8fafc"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#1e293b"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#dbeafe"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#1e293b"))
+    app.setPalette(palette)
+
+
+def polish_combo_popups(root) -> None:
+    """The dropdown is its own window; give that list view the light sheet directly."""
+    for combo in root.findChildren(QComboBox):
+        view = combo.view()
+        view.setStyleSheet(_POPUP_VIEW)
+        palette = view.palette()
+        palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#1e293b"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#dbeafe"))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#1e293b"))
+        view.setPalette(palette)

@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from processing.groups import load_groups, save_groups
 from protocol.messages import DataPacket
 from qt_ui.session import DEFAULT_SETTINGS, ROOT, TESTDATA, RunOptions, SessionController
+from qt_ui.theme import polish_combo_popups
 from qt_ui.widgets.experiment_page import ExperimentPage
 from qt_ui.widgets.group_editor import GroupEditorPage
 from qt_ui.widgets.settings_row import SettingsRow
@@ -80,6 +81,7 @@ class MainWindow(QMainWindow):
         self._sync_buttons()
         if self.session.groups:
             self.experiment.highlight(self.session.groups[0].name)
+        polish_combo_popups(self)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.session.poll)
@@ -93,7 +95,7 @@ class MainWindow(QMainWindow):
         self.ip.setObjectName("ipEdit")
         self.ip.setFixedWidth(150)
         row.addWidget(self.ip)
-        row.addWidget(QLabel("埠"))
+        row.addWidget(QLabel("port"))
         self.port = QLineEdit(fields["port"])
         self.port.setObjectName("portEdit")
         self.port.setFixedWidth(72)
