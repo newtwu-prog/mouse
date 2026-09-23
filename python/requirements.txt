@@ -1,0 +1,7 @@
+nidaqmx>=1.0
+nifpga>=22.0
+nisyscfg>=0.2
+numpy>=1.22
+scipy>=1.9
+matplotlib>=3.6
+nptdms>=1.0

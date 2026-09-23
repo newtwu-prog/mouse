@@ -1,0 +1,3 @@
+Place your 12-hour mouse TDMS file in this folder, then run:
+py -3.11 python\tdms_replay.py python\testdata\your_file.tdms
+py -3.11 python\rt_target\main.py --tdms python\testdata\your_file.tdms --tdms-speed 10

@@ -1,0 +1,21 @@
+# Keep only python main sources in this repo
+/*
+!/.gitignore
+!/python/
+
+python/**/__pycache__/
+python/**/*.py[cod]
+python/**/*.bak*
+python/**/*.bak_*
+python/**/*REFERENCE_baseline*
+python/**/*.log
+python/recordings/
+python/wheels_crio/
+python/get-pip.py
+python/_kyle_*
+python/_polish_*
+python/_signal_*
+python/_*.txt
+python/_inv.py
+python/.venv/
+python/venv/

@@ -1,0 +1,22 @@
+{
+  "sample_period_us": 5000,
+  "epoch_sec": 12.0,
+  "ttl_enabled": true,
+  "ttl_output_ms": 10.0,
+  "ttl_refractory_ms": 100.0,
+  "record_root": "C:\\Users\\sales\\Desktop\\new_mouse_test2\\python\\recordings",
+  "groups": [
+    {
+      "name": "group_1",
+      "eeg_ai": 0,
+      "emg_ai": 1,
+      "movement_threshold": 1.0,
+      "theta_delta_threshold": 0.5,
+      "target_state": "REM",
+      "ttl_dio": 0,
+      "threshold_v": 0.8,
+      "threshold_mode": "above",
+      "threshold_n": 1
+    }
+  ]
+}
