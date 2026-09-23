@@ -149,6 +149,9 @@ def _check_labels(window: MainWindow) -> None:
     assert window.groups_page.table.item(0, 9).text() == "CH0"
     assert window.groups_page.btn_confirm.text() == "套用設定"
     assert window.findChild(QLabel, "statusChip").text()
+    labels = [label.text() for label in window.findChildren(QLabel)]
+    assert "port" in labels
+    assert "埠" not in labels
     assert window.port.text() == "7001"
     assert window.settings.autoscale.isChecked() is False
     assert window.settings.autoscale.text() == "Y軸自動縮放"
@@ -315,7 +318,14 @@ def main() -> int:
         assert window.experiment.charts.point_count("group_1", "EEG") > 0
         assert window.experiment.charts.point_count("group_1", "TTL") > 0
         assert window.experiment.charts.point_count("group_1", "delta") > 0
-        assert "NREM" in window.experiment.status._cards["group_1"].state.text()
+        card = window.experiment.status._cards["group_1"]
+        assert "NREM" in card.state.text()
+        assert card.state.property("phase") == "NREM"
+        assert card.state.styleSheet() == ""
+        phase_updates = card._phase_updates
+        window.experiment.append_packet(_packet(99))
+        assert card._phase_updates == phase_updates
+        assert card.state.property("phase") == "NREM"
         window.settings.span.setText("6")
         window._apply_span()
         _pump(0.3)

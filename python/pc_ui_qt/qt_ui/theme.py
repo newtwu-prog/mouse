@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtWidgets import QApplication, QComboBox
+
 FONT_FAMILIES = (
     "Microsoft JhengHei UI",
     "Microsoft JhengHei",
@@ -67,6 +72,28 @@ QLineEdit:read-only {
 QComboBox::drop-down {
     border: none;
     width: 18px;
+}
+QComboBox QAbstractItemView {
+    background: #ffffff;
+    color: #1e293b;
+    border: 1px solid #cbd5e1;
+    selection-background-color: #dbeafe;
+    selection-color: #1e293b;
+    outline: 0;
+}
+QComboBox QAbstractItemView::item {
+    min-height: 22px;
+    padding: 3px 8px;
+    background: #ffffff;
+    color: #1e293b;
+}
+QComboBox QAbstractItemView::item:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+QComboBox QAbstractItemView::item:selected {
+    background: #dbeafe;
+    color: #1e293b;
 }
 QPushButton {
     background: #f8fafc;
@@ -173,6 +200,45 @@ QTabBar::tab:selected {
 }
 QCheckBox {
     spacing: 6px;
+    color: #1e293b;
+    background: #e2e8f0;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 2px 8px 2px 4px;
+}
+QCheckBox:hover {
+    background: #d5dde6;
+    border-color: #94a3b8;
+}
+QCheckBox:checked {
+    background: #dbe3ec;
+    border-color: #94a3b8;
+}
+QCheckBox:disabled {
+    color: #94a3b8;
+    background: #f1f5f9;
+    border-color: #e2e8f0;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    background: #e8eef4;
+    border: 1px solid #64748b;
+    border-radius: 3px;
+}
+QCheckBox::indicator:hover {
+    background: #d5dde6;
+    border-color: #475569;
+}
+QCheckBox::indicator:checked {
+    background: #2563eb;
+    border: 1px solid #1d4ed8;
+    image: url(checkbox_check.png);
+}
+QCheckBox::indicator:checked:disabled {
+    background: #94a3b8;
+    border-color: #94a3b8;
+    image: url(checkbox_check.png);
 }
 QPlainTextEdit#logView {
     background: #0f172a;
@@ -202,6 +268,7 @@ QLabel#stateBig {
     font-size: 20px;
     font-weight: 700;
 }
+/*PHASE*/
 QLabel#liveStatus {
     color: #15803d;
     font-weight: 600;
@@ -225,3 +292,70 @@ QSplitter#chartSplitter::handle {
     border-radius: 2px;
 }
 """
+
+_CHECK_ICON = (Path(__file__).resolve().parent / "checkbox_check.png").as_posix()
+STYLESHEET = STYLESHEET.replace("checkbox_check.png", _CHECK_ICON)
+
+# Sleep-stage color lives on a dynamic property so RUN does not call setStyleSheet.
+_PHASE_TOKEN = {"WAKE": "WAKE", "NREM": "NREM", "REM": "REM", "—": "idle"}
+_PHASE_RULES = "\n".join(
+    f'QLabel#stateBig[phase="{token}"] {{ color: {STATE_COLOR[state]}; }}'
+    for state, token in _PHASE_TOKEN.items()
+)
+STYLESHEET = STYLESHEET.replace("/*PHASE*/", _PHASE_RULES)
+
+
+def phase_token(state: str) -> str:
+    return _PHASE_TOKEN.get(state, "idle")
+
+_POPUP_VIEW = """
+QAbstractItemView {
+    background: #ffffff;
+    color: #1e293b;
+    selection-background-color: #dbeafe;
+    selection-color: #1e293b;
+    outline: 0;
+}
+QAbstractItemView::item {
+    background: #ffffff;
+    color: #1e293b;
+    min-height: 22px;
+    padding: 3px 8px;
+}
+QAbstractItemView::item:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+QAbstractItemView::item:selected {
+    background: #dbeafe;
+    color: #1e293b;
+}
+"""
+
+
+def apply_light_palette(app: QApplication) -> None:
+    """Keep combo popups light. A styled QComboBox otherwise paints a black list on Windows."""
+    palette = app.palette()
+    palette.setColor(QPalette.ColorRole.Window, QColor("#e8eef4"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#1e293b"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#f8fafc"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#1e293b"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#f8fafc"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#1e293b"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#dbeafe"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#1e293b"))
+    app.setPalette(palette)
+
+
+def polish_combo_popups(root) -> None:
+    """The dropdown is its own window; give that list view the light sheet directly."""
+    for combo in root.findChildren(QComboBox):
+        view = combo.view()
+        view.setStyleSheet(_POPUP_VIEW)
+        palette = view.palette()
+        palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#1e293b"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#dbeafe"))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#1e293b"))
+        view.setPalette(palette)
