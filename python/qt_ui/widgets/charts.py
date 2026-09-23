@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QRectF, Qt, pyqtSignal as Signal
 from PyQt6.QtWidgets import QSizePolicy, QSplitter, QVBoxLayout, QWidget
 
 from qt_ui.theme import TRACE_COLOR
@@ -18,6 +18,10 @@ _SERIES = {
     "delta": ("energy", "d", "delta energy"),
     "theta": ("energy", "t", "theta energy"),
 }
+
+# Light panel behind the in-plot legend. 140/255 is a soft veil: dark labels
+# and solid swatches stay crisp, and the waveform still shows through.
+LEGEND_BACKDROP_ALPHA = 140
 
 
 class SpanAxis(pg.AxisItem):
@@ -80,6 +84,29 @@ class SpanAxis(pg.AxisItem):
         return [fmt.format(float(v) * scale) for v in values]
 
 
+class ColorSwatch(pg.GraphicsWidget):
+    """Solid color chip for the legend. The panel behind it is translucent."""
+
+    sigClicked = Signal(object)
+
+    def __init__(self, item) -> None:
+        super().__init__()
+        self.item = item
+        self.setFixedWidth(16)
+        self.setFixedHeight(14)
+
+    def boundingRect(self):
+        return QRectF(0, 0, 16, 14)
+
+    def paint(self, painter, *args):
+        pen = self.item.opts.get("pen")
+        color = pg.mkColor(pen.color() if pen is not None else "#334155")
+        color.setAlpha(255)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(pg.mkBrush(color))
+        painter.drawRect(QRectF(1, 3, 13, 8))
+
+
 class ExperimentCharts(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -122,9 +149,9 @@ class ExperimentCharts(QWidget):
         self._legend_labels: list[str] = []
         self._legend_key: tuple[str, ...] = ()
         self._legends = {
-            "main": self.main.addLegend(offset=(-8, 8)),
-            "energy": self.energy.addLegend(offset=(-8, 8)),
-            "emg": self.emg.addLegend(offset=(-8, 8)),
+            "main": self._add_legend(self.main),
+            "energy": self._add_legend(self.energy),
+            "emg": self._add_legend(self.emg),
         }
         self._limits = {
             "main": (-0.5, 0.5),
@@ -132,6 +159,12 @@ class ExperimentCharts(QWidget):
             "emg": (-0.5, 0.5),
         }
         self._locked = {"main": False, "energy": False, "emg": False}
+        self._span = 1.0
+        self._locking_x = False
+        for view in self._x_views():
+            view.setDefaultPadding(0.0)
+            view.enableAutoRange(x=False, y=False)
+            view.sigXRangeChanged.connect(self._guard_x)
         self.set_span(1.0)
 
     def legend_labels(self) -> list[str]:
@@ -146,9 +179,40 @@ class ExperimentCharts(QWidget):
 
     def set_span(self, seconds: float) -> None:
         span = max(float(seconds), 0.2)
-        self.main.setXRange(0.0, span, padding=0)
-        self._ttl_vb.setXRange(0.0, span, padding=0)
+        self._span = span
+        self._lock_x(span)
+
+    def _x_views(self):
+        return (
+            self.main.getViewBox(),
+            self.energy.getViewBox(),
+            self.emg.getViewBox(),
+            self._ttl_vb,
+        )
+
+    def _lock_x(self, span: float) -> None:
+        """Match tkinter ax.set_xlim(0, Display_s) on every plot, including TTL."""
+        if self._locking_x:
+            return
+        self._locking_x = True
+        try:
+            for view in self._x_views():
+                view.enableAutoRange(x=False)
+                view.setLimits(xMin=0.0, xMax=float(span))
+                view.setXRange(0.0, float(span), padding=0.0)
+        finally:
+            self._locking_x = False
         self._sync_ttl_view()
+
+    def _guard_x(self, *_args) -> None:
+        if self._locking_x:
+            return
+        span = self._span
+        for view in self._x_views():
+            low, high = view.viewRange()[0]
+            if abs(low) > 1e-4 or abs(high - span) > 1e-3:
+                self._lock_x(span)
+                return
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -231,6 +295,7 @@ class ExperimentCharts(QWidget):
 
         self._apply_y(buckets, autoscale)
         self._ttl_vb.setYRange(-0.1, 1.2, padding=0)
+        self._lock_x(self._span)
         self._refresh_legends(legend_rows)
         self._sync_ttl_view()
 
@@ -244,7 +309,21 @@ class ExperimentCharts(QWidget):
         plot.getAxis("left").setWidth(62)
         plot.setMinimumHeight(min_height)
         plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        view = plot.getViewBox()
+        view.setDefaultPadding(0.0)
+        view.enableAutoRange(x=False, y=False)
         return plot
+
+    def _add_legend(self, plot: pg.PlotWidget) -> pg.LegendItem:
+        legend = plot.addLegend(
+            offset=(-8, 6),
+            brush=pg.mkBrush(255, 255, 255, LEGEND_BACKDROP_ALPHA),
+            pen=pg.mkPen(148, 163, 184, 120),
+            labelTextColor="#0f172a",
+            labelTextSize="9pt",
+            sampleType=ColorSwatch,
+        )
+        return legend
 
     def _install_ttl_axis(self) -> None:
         plot_item = self.main.getPlotItem()
@@ -261,7 +340,8 @@ class ExperimentCharts(QWidget):
         plot_item.scene().addItem(self._ttl_vb)
         axis.linkToView(self._ttl_vb)
         self._ttl_vb.setXLink(plot_item)
-        self._ttl_vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
+        self._ttl_vb.enableAutoRange(x=False, y=False)
+        self._ttl_vb.setDefaultPadding(0.0)
         self._ttl_vb.setYRange(-0.1, 1.2, padding=0)
 
         def update() -> None:

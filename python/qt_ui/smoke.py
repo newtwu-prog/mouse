@@ -171,8 +171,14 @@ def _check_labels(window: MainWindow) -> None:
     for label in window.findChildren(QLabel):
         texts.append(label.text())
     blob = "\n".join(texts)
-    for banned in ("條件一", "條件二", "Cond1", "Cond2"):
+    for banned in ("條件一", "條件二", "Cond1", "Cond2", "輸出固定脈寬"):
         assert banned not in blob, banned
+    assert window.findChild(QLabel, "hint") is None
+    from qt_ui.widgets.charts import LEGEND_BACKDROP_ALPHA
+
+    backdrop = window.experiment.charts._legends["main"].opts["brush"].color()
+    assert backdrop.alpha() == LEGEND_BACKDROP_ALPHA
+    assert 0 < backdrop.alpha() < 255
     assert "delta energy" in window.experiment.charts.legend_labels()
     assert "theta energy" in window.experiment.charts.legend_labels()
     assert "TTL" in window.experiment.charts.main.getAxis("right").labelText
@@ -259,6 +265,21 @@ def main() -> int:
         assert window.experiment.charts.point_count("group_1", "TTL") > 0
         assert window.experiment.charts.point_count("group_1", "delta") > 0
         assert "NREM" in window.experiment.status._cards["group_1"].state.text()
+        window.settings.span.setText("6")
+        window._apply_span()
+        _pump(0.3)
+        charts = window.experiment.charts
+        for plot in (charts.main, charts.energy, charts.emg):
+            low, high = plot.getViewBox().viewRange()[0]
+            assert abs(low) < 1e-3 and abs(high - 6.0) < 1e-2, (plot, low, high)
+        ttl_low, ttl_high = charts._ttl_vb.viewRange()[0]
+        assert abs(ttl_low) < 1e-3 and abs(ttl_high - 6.0) < 1e-2, (ttl_low, ttl_high)
+        axis = charts.emg.getAxis("bottom")
+        visible_ticks = []
+        for _step, values in axis.tickValues(0.0, 6.0, max(charts.emg.width(), 200)):
+            visible_ticks.extend(values)
+        assert visible_ticks
+        assert min(visible_ticks) >= -1e-6, visible_ticks
         window.experiment.charts.apply_ratio()
         _pump(0.2)
         shot = Path("/tmp/qt_experiment_page.png")
