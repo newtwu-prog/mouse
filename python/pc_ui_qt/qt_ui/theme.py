@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QComboBox
 
@@ -198,6 +200,45 @@ QTabBar::tab:selected {
 }
 QCheckBox {
     spacing: 6px;
+    color: #1e293b;
+    background: #e2e8f0;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 2px 8px 2px 4px;
+}
+QCheckBox:hover {
+    background: #d5dde6;
+    border-color: #94a3b8;
+}
+QCheckBox:checked {
+    background: #dbe3ec;
+    border-color: #94a3b8;
+}
+QCheckBox:disabled {
+    color: #94a3b8;
+    background: #f1f5f9;
+    border-color: #e2e8f0;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    background: #e8eef4;
+    border: 1px solid #64748b;
+    border-radius: 3px;
+}
+QCheckBox::indicator:hover {
+    background: #d5dde6;
+    border-color: #475569;
+}
+QCheckBox::indicator:checked {
+    background: #2563eb;
+    border: 1px solid #1d4ed8;
+    image: url(checkbox_check.png);
+}
+QCheckBox::indicator:checked:disabled {
+    background: #94a3b8;
+    border-color: #94a3b8;
+    image: url(checkbox_check.png);
 }
 QPlainTextEdit#logView {
     background: #0f172a;
@@ -250,6 +291,9 @@ QSplitter#chartSplitter::handle {
     border-radius: 2px;
 }
 """
+
+_CHECK_ICON = (Path(__file__).resolve().parent / "checkbox_check.png").as_posix()
+STYLESHEET = STYLESHEET.replace("checkbox_check.png", _CHECK_ICON)
 
 _POPUP_VIEW = """
 QAbstractItemView {
