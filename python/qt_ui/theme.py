@@ -202,6 +202,10 @@ QLabel#stateBig {
     font-size: 20px;
     font-weight: 700;
 }
+QLabel#liveStatus {
+    color: #15803d;
+    font-weight: 600;
+}
 QTableWidget {
     background: #ffffff;
     border: 1px solid #e2e8f0;

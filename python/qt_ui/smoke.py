@@ -195,6 +195,42 @@ def _check_labels(window: MainWindow) -> None:
     assert emg.isChecked() is True  # bottom EMG chart cannot go blank
     eeg.setChecked(True)
 
+    assert window.settings.aux.isVisible()
+    assert window.settings.aux_toggle.text() == "收合離線與存檔"
+    window._idle_chart_h = window.experiment.charts.splitter.height()
+    assert window.experiment.signals.group_label.text() == "勾選群組"
+    live_labels = [label.text() for label in window.experiment.live.findChildren(QLabel)]
+    assert "即時群組" in live_labels
+    setting_labels = [label.text() for label in window.settings.findChildren(QLabel)]
+    assert "顯示群組" in setting_labels
+
+    window.groups_page.btn_add.click()
+    window.groups_page.btn_confirm.click()
+    first = window.session.groups[0].name
+    second = window.session.groups[1].name
+    window.settings.plot_group.setCurrentText(second)
+    assert window.experiment.signals.combo.currentText() == second
+    assert window.experiment.live.selected_name() == second
+    window.experiment.signals.combo.setCurrentText(first)
+    assert window.settings.plot_group.currentText() == first
+    assert window.experiment.live.selected_name() == first
+    window.experiment.live.group_box.setCurrentText(second)
+    assert window.experiment.signals.combo.currentText() == second
+    assert window.settings.plot_group.currentText() == second
+    window.groups_page._select_row(1)
+    window.groups_page.btn_delete.click()
+    window.groups_page.btn_confirm.click()
+    assert [group.name for group in window.session.groups] == [first]
+    assert window.experiment.signals.combo.currentText() == first
+    assert window.experiment.live.selected_name() == first
+
+    window.experiment.live.threshold.setText("0.33")
+    window.experiment.live.btn_apply.click()
+    assert window.tabs.currentIndex() == 1
+    assert window.experiment.live.note.isVisible()
+    assert window.experiment.live.note.text().startswith("已更新")
+    assert first in window.experiment.live.note.text()
+
 
 def _check_memory() -> None:
     bar = SignalToggleBar()
@@ -261,6 +297,17 @@ def main() -> int:
         assert _wait(lambda: "實驗中" in window.status.text(), 5), window.status.text()
         assert server.got_start.is_set()
         assert window.tabs.currentIndex() == 1
+        assert window.settings.aux.isVisible() is False
+        assert window.settings.aux_toggle.text() == "展開離線與存檔"
+        _pump(0.3)
+        window.experiment.charts.apply_ratio()
+        _pump(0.1)
+        grown = window.experiment.charts.splitter.height()
+        assert grown > window._idle_chart_h + 12, (grown, window._idle_chart_h)
+        window.settings.aux_toggle.click()
+        _pump(0.35)
+        assert window.settings.aux.isVisible()
+        assert window.settings.aux_toggle.text() == "收合離線與存檔"
         assert window.experiment.charts.point_count("group_1", "EEG") > 0
         assert window.experiment.charts.point_count("group_1", "TTL") > 0
         assert window.experiment.charts.point_count("group_1", "delta") > 0

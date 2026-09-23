@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -34,6 +35,8 @@ def _form(box: QGroupBox) -> QFormLayout:
 
 class SettingsRow(QWidget):
     """Controls that sit between the connection bar and the charts."""
+
+    aux_changed = Signal()
 
     def __init__(self, fields: dict, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -97,6 +100,23 @@ class SettingsRow(QWidget):
         ttl_form.addRow("輸出時間 ms", self.ttl_out)
         ttl_form.addRow("不應期時間 ms", self.ttl_ref)
 
+        aux_bar = QHBoxLayout()
+        aux_bar.setContentsMargins(0, 0, 0, 0)
+        self.aux_toggle = QPushButton("收合離線與存檔")
+        self.aux_toggle.setObjectName("auxToggle")
+        self.aux_toggle.setCheckable(True)
+        self.aux_toggle.setChecked(True)
+        self.aux_toggle.toggled.connect(self._on_aux_toggled)
+        aux_bar.addWidget(self.aux_toggle)
+        aux_bar.addStretch(1)
+        root.addLayout(aux_bar)
+
+        self.aux = QWidget()
+        self.aux.setObjectName("auxBlock")
+        aux_layout = QVBoxLayout(self.aux)
+        aux_layout.setContentsMargins(0, 0, 0, 0)
+        aux_layout.setSpacing(8)
+
         offline = QGroupBox("離線 TDMS 測試（不需連 cRIO）")
         offline_row = QHBoxLayout(offline)
         offline_row.setContentsMargins(10, 8, 10, 8)
@@ -121,9 +141,10 @@ class SettingsRow(QWidget):
         self.offline_stop.setObjectName("offlineStop")
         offline_row.addWidget(self.offline_start)
         offline_row.addWidget(self.offline_stop)
-        root.addWidget(offline)
+        aux_layout.addWidget(offline)
 
-        save = QHBoxLayout()
+        save_host = QWidget()
+        save = QHBoxLayout(save_host)
         save.setContentsMargins(2, 2, 2, 2)
         save.setSpacing(8)
         save.addWidget(QLabel("存檔路徑"))
@@ -133,4 +154,20 @@ class SettingsRow(QWidget):
         self.record_browse = QPushButton("選擇資料夾…")
         self.record_browse.setObjectName("recordBrowse")
         save.addWidget(self.record_browse)
-        root.addLayout(save)
+        aux_layout.addWidget(save_host)
+        root.addWidget(self.aux)
+
+    def set_aux_open(self, open_: bool) -> None:
+        """Show or hide the offline-test row and the save-path row together."""
+        self.aux_toggle.blockSignals(True)
+        self.aux_toggle.setChecked(bool(open_))
+        self.aux_toggle.blockSignals(False)
+        self._apply_aux(bool(open_))
+
+    def _on_aux_toggled(self, open_: bool) -> None:
+        self._apply_aux(bool(open_))
+
+    def _apply_aux(self, open_: bool) -> None:
+        self.aux.setVisible(open_)
+        self.aux_toggle.setText("收合離線與存檔" if open_ else "展開離線與存檔")
+        self.aux_changed.emit()

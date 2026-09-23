@@ -72,6 +72,8 @@ class MainWindow(QMainWindow):
         self._build_log(root)
 
         self._wire()
+        self._aligning = False
+        self._run_active = False
         self._set_status("未連線到 RT", "idle")
         self._log(self.session.startup_note())
         self._log("Log 預設隱藏，按「顯示 Log」可開啟。")
@@ -145,9 +147,11 @@ class MainWindow(QMainWindow):
         self.groups_page.btn_confirm.clicked.connect(self._confirm_settings)
         self.groups_page.btn_load.clicked.connect(self._load_settings)
         self.groups_page.btn_save.clicked.connect(self._save_settings)
-        self.experiment.live.group_changed.connect(self._on_live_group)
+        self.experiment.live.group_changed.connect(self._align_group)
+        self.experiment.signals.group_changed.connect(self._align_group)
         self.experiment.live.apply_clicked.connect(self._live_update)
-        self.settings.plot_group.currentTextChanged.connect(self._on_plot_group)
+        self.settings.plot_group.currentTextChanged.connect(self._align_group)
+        self.settings.aux_changed.connect(self._on_aux_changed)
         self.session.statusChanged.connect(self._set_status)
         self.session.logMessage.connect(self._log)
         self.session.buttonsChanged.connect(self._sync_buttons)
@@ -223,15 +227,25 @@ class MainWindow(QMainWindow):
         if index == 1:
             self.experiment.charts.apply_ratio()
 
-    def _on_plot_group(self, name: str) -> None:
-        self.experiment.highlight(name)
-        self.experiment.live.select_group(name)
-
-    def _on_live_group(self, name: str) -> None:
-        if name and name != self.settings.plot_group.currentText():
-            self.settings.plot_group.setCurrentText(name)
-        else:
+    def _align_group(self, name: str) -> None:
+        """顯示群組、勾選群組、即時群組 stay on the same group."""
+        if not name or self._aligning:
+            return
+        self._aligning = True
+        try:
+            if (
+                self.settings.plot_group.findText(name) >= 0
+                and self.settings.plot_group.currentText() != name
+            ):
+                self.settings.plot_group.setCurrentText(name)
             self.experiment.highlight(name)
+            self.experiment.live.select_group(name)
+            self.experiment.signals.select_group(name)
+        finally:
+            self._aligning = False
+
+    def _on_aux_changed(self) -> None:
+        QTimer.singleShot(0, self.experiment.charts.apply_ratio)
 
     def _on_groups_edited(self) -> None:
         self.session.note_groups_dirty(list(self.groups_page.groups))
@@ -249,9 +263,7 @@ class MainWindow(QMainWindow):
             return
         self._sync_group_choices()
         self.experiment.set_groups(self.session.groups)
-        name = self.settings.plot_group.currentText()
-        self.experiment.highlight(name)
-        self.experiment.live.select_group(name)
+        self._align_group(self.settings.plot_group.currentText())
         pushed = ""
         if self.session.connected:
             pushed = self.session.push_config(options)
@@ -321,6 +333,7 @@ class MainWindow(QMainWindow):
         name = self.experiment.live.selected_name()
         err = self.session.apply_live(name, movement, ratio, mode, threshold, options)
         if err:
+            self.experiment.live.clear_note()
             QMessageBox.warning(self, "即時更新", err)
             return
         self.groups_page.groups = list(self.session.groups)
@@ -329,7 +342,8 @@ class MainWindow(QMainWindow):
             self.groups_page._select_row(min(max(self.groups_page._index, 0), len(self.groups_page.groups) - 1))
         self.experiment.status.set_groups(self.session.groups)
         self.experiment.live.set_groups(self.session.groups, selected=name)
-        self.experiment.highlight(self.settings.plot_group.currentText())
+        self._align_group(name)
+        self.experiment.live.mark_applied(name)
         self.groups_page.set_status(f"已即時更新群組 {name} 的閾值參數。")
 
     def _sync_group_choices(self) -> None:
@@ -427,6 +441,12 @@ class MainWindow(QMainWindow):
         self.status.setProperty("state", state)
         self.status.style().unpolish(self.status)
         self.status.style().polish(self.status)
+        running = state == "run"
+        if running and not self._run_active:
+            self.settings.set_aux_open(False)
+        elif self._run_active and not running:
+            self.settings.set_aux_open(True)
+        self._run_active = running
 
     def _log(self, text: str) -> None:
         line = text.rstrip()

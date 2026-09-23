@@ -14,6 +14,7 @@ SIGNALS = ("EEG", "EMG", "TTL", "delta", "theta")
 
 class SignalToggleBar(QGroupBox):
     visibility_changed = Signal()
+    group_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("顯示訊號", parent)
@@ -22,7 +23,9 @@ class SignalToggleBar(QGroupBox):
         row = QHBoxLayout(self)
         row.setContentsMargins(8, 4, 8, 4)
         row.setSpacing(8)
-        row.addWidget(QLabel("群組"))
+        self.group_label = QLabel("勾選群組")
+        self.group_label.setObjectName("signalGroupLabel")
+        row.addWidget(self.group_label)
         self.combo = QComboBox()
         self.combo.setObjectName("signalGroupCombo")
         self.combo.setMinimumWidth(140)
@@ -71,8 +74,17 @@ class SignalToggleBar(QGroupBox):
     def is_on(self, group: str, signal: str) -> bool:
         return bool(self._states.get(group, {}).get(signal, False))
 
-    def _on_group(self, _name: str) -> None:
+    def select_group(self, name: str) -> None:
+        if not name or name == self.combo.currentText():
+            return
+        if self.combo.findText(name) < 0:
+            return
+        self.combo.setCurrentText(name)
+
+    def _on_group(self, name: str) -> None:
         self._load_checks()
+        if name:
+            self.group_changed.emit(name)
 
     def _on_toggled(self, signal: str, checked: bool) -> None:
         name = self.combo.currentText()

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal as Signal
-from PyQt6.QtWidgets import QComboBox, QFormLayout, QGroupBox, QLineEdit, QPushButton
+from PyQt6.QtCore import QTimer, pyqtSignal as Signal
+from PyQt6.QtWidgets import QComboBox, QFormLayout, QGroupBox, QLabel, QLineEdit, QPushButton
 
 from processing.groups import THRESHOLD_MODE_LABELS, THRESHOLD_MODES, GroupSetting
 
@@ -34,7 +34,7 @@ class LiveParamsPanel(QGroupBox):
         self.threshold.setObjectName("liveThreshold")
         for widget in (self.move, self.ratio, self.threshold, self.group_box, self.mode):
             widget.setMinimumWidth(120)
-        form.addRow("群組", self.group_box)
+        form.addRow("即時群組", self.group_box)
         form.addRow("Movement 閾值", self.move)
         form.addRow("θ/δ 閾值", self.ratio)
         form.addRow("判斷方式", self.mode)
@@ -42,9 +42,21 @@ class LiveParamsPanel(QGroupBox):
         self.btn_apply = QPushButton("即時更新")
         self.btn_apply.setObjectName("liveApply")
         form.addRow(self.btn_apply)
+        self.note = QLabel("")
+        self.note.setObjectName("liveStatus")
+        self.note.setWordWrap(True)
+        self.note.hide()
+        form.addRow(self.note)
 
+        self._filling = False
+        self._restore = QTimer(self)
+        self._restore.setSingleShot(True)
+        self._restore.timeout.connect(self._restore_button)
         self.group_box.currentTextChanged.connect(self._on_group)
         self.btn_apply.clicked.connect(self.apply_clicked.emit)
+        for field in (self.move, self.ratio, self.threshold):
+            field.textChanged.connect(self.clear_note)
+        self.mode.currentTextChanged.connect(self.clear_note)
 
     def set_groups(self, groups: list[GroupSetting], selected: str | None = None) -> None:
         self._groups = list(groups)
@@ -71,6 +83,25 @@ class LiveParamsPanel(QGroupBox):
     def selected_name(self) -> str:
         return self.group_box.currentText().strip()
 
+    def mark_applied(self, name: str) -> None:
+        """Success stays on this panel. Failures are dialogs, not this line."""
+        self.note.setText(f"已更新 {name}。下一筆資料開始生效。")
+        self.note.setVisible(True)
+        self.btn_apply.setText("已更新")
+        self._restore.start(1400)
+
+    def clear_note(self, *_args) -> None:
+        if self._filling:
+            return
+        self.note.clear()
+        self.note.hide()
+        if self.btn_apply.text() != "即時更新":
+            self._restore_button()
+
+    def _restore_button(self) -> None:
+        self._restore.stop()
+        self.btn_apply.setText("即時更新")
+
     def values(self) -> tuple[float, float, str, float]:
         return (
             float(self.move.text()),
@@ -88,8 +119,12 @@ class LiveParamsPanel(QGroupBox):
         group = next((item for item in self._groups if item.name == name), None)
         if group is None:
             return
-        self.move.setText(f"{group.movement_threshold:g}")
-        self.ratio.setText(f"{group.theta_delta_threshold:g}")
-        label = THRESHOLD_MODE_LABELS.get(group.threshold_mode, THRESHOLD_MODE_LABELS["above"])
-        self.mode.setCurrentText(label)
-        self.threshold.setText(f"{group.threshold_v:g}")
+        self._filling = True
+        try:
+            self.move.setText(f"{group.movement_threshold:g}")
+            self.ratio.setText(f"{group.theta_delta_threshold:g}")
+            label = THRESHOLD_MODE_LABELS.get(group.threshold_mode, THRESHOLD_MODE_LABELS["above"])
+            self.mode.setCurrentText(label)
+            self.threshold.setText(f"{group.threshold_v:g}")
+        finally:
+            self._filling = False
