@@ -1,9 +1,10 @@
 """FPGA sample period and a wall-clock check that it really is that rate.
 
-``Count(uSec)=5000`` means a 200 Hz sample clock on the FPGA, not a plot
-label. The host writes that integer in microseconds and reads it back. It
-does not rewrite the count as ticks or as some other number that would only
-look like 200 Hz:
+Normal use keeps the default ``Count(uSec)=5000`` (200 Hz). The same path
+writes whatever period the existing setting carries: the host does not lock
+the register at 5000, and it does not invent a second "change sample rate"
+flow. The value is microseconds and is read back. It is not rewritten as
+ticks or as some other count that would only look like the requested rate:
 
 - 5000 ticks of the 40 MHz FPGA clock would be 8 kHz, not 200 Hz.
 - A delivery rate near 75 Hz is not an integer rescaling of 5000 µs.
@@ -85,8 +86,10 @@ class MeasuredSampleRate:
         nominal_fs: float,
         min_elapsed: float = 1.0,
         min_samples: int = 40,
+        period_us: int | None = None,
     ) -> None:
         self.nominal = float(nominal_fs)
+        self.period_us = _requested_period_us(self.nominal, period_us)
         self.fs = float(nominal_fs)
         self.min_elapsed = float(min_elapsed)
         self.min_samples = int(min_samples)
@@ -116,6 +119,15 @@ class MeasuredSampleRate:
             self.fs = measured
             self.settled = True
         return self.fs
+
+
+def _requested_period_us(nominal_fs: float, period_us: int | None) -> int:
+    """Microseconds actually requested. Default 5000 only when none was given."""
+    if period_us is not None and int(period_us) > 0:
+        return int(period_us)
+    if nominal_fs <= 0:
+        return 5000
+    return max(int(round(1_000_000.0 / float(nominal_fs))), 1)
 
 
 def rate_is_near_nominal(
@@ -151,23 +163,25 @@ def vi_restart_for_period(resource: str, vi_running: bool) -> tuple[bool, str]:
 def measured_rate_message(meter: MeasuredSampleRate) -> str:
     nominal = meter.nominal
     measured = meter.fs
+    period = meter.period_us
     stats = (
         f"measured_fs={measured:.2f} nominal_fs={nominal:.1f} "
+        f"Count(uSec)={period} "
         f"samples={meter.samples} elapsed_s={meter.elapsed:.2f}."
     )
     if rate_is_near_nominal(measured, nominal):
         return (
-            f"取樣率確認：實測 {measured:.2f} Hz，接近名義 {nominal:.1f} Hz"
-            f"（period_us 對應 1e6/period_us）。 Sample rate OK. {stats}"
+            f"取樣率確認：實測 {measured:.2f} Hz，接近要求的 {nominal:.1f} Hz"
+            f"（Count(uSec)={period} µs）。 Sample rate OK. {stats}"
         )
     return (
         f"取樣率斷言失敗：FPGA 應以約 {nominal:.1f} Hz 取樣"
-        f"（Count(uSec) 為微秒，5000 → 200 Hz），實測只有 {measured:.2f} Hz。"
-        f" 這不是 200 samples/s。若 Count(uSec) 讀回已等於要求值，bitfile 並沒有用"
-        f"該暫存器做 1 µs 計時；Python 不能假造 200 Hz，必須在 LabVIEW FPGA 修改"
-        f" FPGA_DAQ.vi。DataPacket.fs 暫時填實測值，只避免圖再被拉一次，"
+        f"（Count(uSec)={period} µs），實測只有 {measured:.2f} Hz。"
+        f" 若讀回已等於 {period}，bitfile 並沒有用該微秒數計時；"
+        f"Python 不能改寫另一個 count 來假造這個速率，必須在 LabVIEW FPGA 修改"
+        f" FPGA_DAQ.vi。DataPacket.fs 暫時填實測值，只讓圖對齊真實間隔，"
         f"硬體仍然是 {measured:.2f} Hz。"
-        f" ASSERTION FAILED: hardware is not sampling near nominal. {stats}"
+        f" ASSERTION FAILED: hardware is not sampling near the requested period. {stats}"
         f" Bitfile is not honoring Count(uSec) as microseconds."
     )
 
@@ -191,9 +205,13 @@ class RateFollow:
         *,
         min_elapsed: float = 1.0,
         min_samples: int = 40,
+        period_us: int | None = None,
     ) -> None:
         self.meter = MeasuredSampleRate(
-            nominal_fs, min_elapsed=min_elapsed, min_samples=min_samples
+            nominal_fs,
+            min_elapsed=min_elapsed,
+            min_samples=min_samples,
+            period_us=period_us,
         )
         self.epoch_sec = float(epoch_sec)
         self.epoch_n = int(epoch_n)

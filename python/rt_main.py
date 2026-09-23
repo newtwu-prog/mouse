@@ -164,7 +164,7 @@ def main() -> int:
             print(f"  period     : {daq.period_detail}")
             print(f"  snapshot   : {daq.snapshot()}")
             print()
-            follow = RateFollow(fs, epoch_sec, epoch_n)
+            follow = RateFollow(fs, epoch_sec, epoch_n, period_us=period_us)
             while True:
                 if deadline is not None and time.perf_counter() >= deadline:
                     break

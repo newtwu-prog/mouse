@@ -157,6 +157,7 @@ class RateFollowTest(unittest.TestCase):
         self.assertTrue(any("ASSERTION FAILED" in line for line in logs))
         self.assertTrue(any("FPGA_DAQ.vi" in line for line in logs))
         self.assertFalse(follow.rate_ok)
+        self.assertTrue(any("Count(uSec)=5000" in line for line in logs))
         # Further packets at the same rate do not log again.
         n_logs = len(logs)
         follow.observe(75, 2.0, scorer, runtimes, logs.append)
@@ -173,6 +174,39 @@ class RateFollowTest(unittest.TestCase):
         self.assertEqual(scorer.fs, 200.0)
         self.assertEqual(follow.epoch_n, 2400)
         self.assertTrue(follow.rate_ok)
+
+
+class AdjustedPeriodTest(unittest.TestCase):
+    def test_nondefault_period_is_written_and_checked(self):
+        """The existing period setting is not locked at 5000 µs / 200 Hz."""
+        reg = _Reg(stored=1)
+        got, _detail = commit_period_us(reg, 10000)
+        self.assertEqual(reg.writes, [10000])
+        self.assertEqual(got, 10000)
+
+        follow = RateFollow(100.0, epoch_sec=12.0, epoch_n=1200, period_us=10000)
+        scorer = _Scorer(100.0)
+        runtimes = {"g": _Runtime(100.0)}
+        logs: list[str] = []
+        follow.observe(1, 0.0, scorer, runtimes, logs.append)
+        follow.observe(100, 1.0, scorer, runtimes, logs.append)
+        self.assertTrue(follow.rate_ok)
+        self.assertEqual(scorer.fs, 100.0)
+        text = "\n".join(logs)
+        self.assertIn("Sample rate OK", text)
+        self.assertIn("Count(uSec)=10000", text)
+        self.assertNotIn("ASSERTION FAILED", text)
+
+        slow = RateFollow(100.0, epoch_sec=12.0, epoch_n=1200, period_us=10000)
+        slow_logs: list[str] = []
+        slow.observe(1, 0.0, scorer, runtimes, slow_logs.append)
+        slow.observe(75, 1.0, scorer, runtimes, slow_logs.append)
+        missed = "\n".join(slow_logs)
+        self.assertFalse(slow.rate_ok)
+        self.assertIn("ASSERTION FAILED", missed)
+        self.assertIn("Count(uSec)=10000", missed)
+        self.assertIn("100.0", missed)
+        self.assertNotIn("5000 → 200", missed)
 
 
 class NominalAssertTest(unittest.TestCase):

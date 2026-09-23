@@ -193,7 +193,11 @@ class RtTargetEngine:
             for g in groups
         }
         last_dio = {g.ttl_dio: False for g in groups}
-        follow = RateFollow(fs, cfg.epoch_sec, epoch_n) if self._daq is not None else None
+        follow = (
+            RateFollow(fs, cfg.epoch_sec, epoch_n, period_us=cfg.period_us)
+            if self._daq is not None
+            else None
+        )
         pending = np.zeros((0, cfg.channels))
         seq = 0
         t0 = time.perf_counter()

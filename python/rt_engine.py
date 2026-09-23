@@ -188,7 +188,7 @@ class RtEngine:
             for g in groups
         }
         last_dio = {g.ttl_dio: False for g in groups}
-        follow = RateFollow(fs, cfg.epoch_sec, epoch_n)
+        follow = RateFollow(fs, cfg.epoch_sec, epoch_n, period_us=cfg.period_us)
         pending = np.zeros((0, cfg.channels))
         wave = np.zeros((0, cfg.channels))
         t0 = time.perf_counter()
