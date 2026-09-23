@@ -5,3 +5,7 @@ numpy>=1.22
 scipy>=1.9
 matplotlib>=3.6
 nptdms>=1.0
+
+# PyQt6 PC UI only (python/pc_ui_qt/). The tkinter UI (python/pc_ui_tk/) does not import these.
+PyQt6>=6.6
+pyqtgraph>=0.13.7
