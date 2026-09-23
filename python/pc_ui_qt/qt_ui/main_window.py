@@ -439,10 +439,14 @@ class MainWindow(QMainWindow):
         self.btn_log.setText("隱藏 Log" if self._log_visible else "顯示 Log")
 
     def _set_status(self, text: str, state: str) -> None:
-        self.status.setText(text)
-        self.status.setProperty("state", state)
-        self.status.style().unpolish(self.status)
-        self.status.style().polish(self.status)
+        if self.status.text() != text:
+            self.status.setText(text)
+        # Polish only when the chip state changes. Packet text updates every
+        # tick; restyling against the app sheet (including checkbox rules) does not.
+        if self.status.property("state") != state:
+            self.status.setProperty("state", state)
+            self.status.style().unpolish(self.status)
+            self.status.style().polish(self.status)
         running = state == "run"
         if running and not self._run_active:
             self.settings.set_aux_open(False)

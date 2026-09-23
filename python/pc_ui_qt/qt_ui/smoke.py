@@ -318,7 +318,14 @@ def main() -> int:
         assert window.experiment.charts.point_count("group_1", "EEG") > 0
         assert window.experiment.charts.point_count("group_1", "TTL") > 0
         assert window.experiment.charts.point_count("group_1", "delta") > 0
-        assert "NREM" in window.experiment.status._cards["group_1"].state.text()
+        card = window.experiment.status._cards["group_1"]
+        assert "NREM" in card.state.text()
+        assert card.state.property("phase") == "NREM"
+        assert card.state.styleSheet() == ""
+        phase_updates = card._phase_updates
+        window.experiment.append_packet(_packet(99))
+        assert card._phase_updates == phase_updates
+        assert card.state.property("phase") == "NREM"
         window.settings.span.setText("6")
         window._apply_span()
         _pump(0.3)

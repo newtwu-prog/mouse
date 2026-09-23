@@ -268,6 +268,7 @@ QLabel#stateBig {
     font-size: 20px;
     font-weight: 700;
 }
+/*PHASE*/
 QLabel#liveStatus {
     color: #15803d;
     font-weight: 600;
@@ -294,6 +295,18 @@ QSplitter#chartSplitter::handle {
 
 _CHECK_ICON = (Path(__file__).resolve().parent / "checkbox_check.png").as_posix()
 STYLESHEET = STYLESHEET.replace("checkbox_check.png", _CHECK_ICON)
+
+# Sleep-stage color lives on a dynamic property so RUN does not call setStyleSheet.
+_PHASE_TOKEN = {"WAKE": "WAKE", "NREM": "NREM", "REM": "REM", "—": "idle"}
+_PHASE_RULES = "\n".join(
+    f'QLabel#stateBig[phase="{token}"] {{ color: {STATE_COLOR[state]}; }}'
+    for state, token in _PHASE_TOKEN.items()
+)
+STYLESHEET = STYLESHEET.replace("/*PHASE*/", _PHASE_RULES)
+
+
+def phase_token(state: str) -> str:
+    return _PHASE_TOKEN.get(state, "idle")
 
 _POPUP_VIEW = """
 QAbstractItemView {
