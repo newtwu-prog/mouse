@@ -38,8 +38,10 @@ class GroupRuntime:
     ) -> None:
         self.group = group
         self.fs = float(fs)
-        self.pulse_n = max(int(round(fs * ttl_output_ms / 1000.0)), 1)
-        self.refractory_n = max(int(round(fs * ttl_refractory_ms / 1000.0)), 0)
+        self.ttl_output_ms = float(ttl_output_ms)
+        self.ttl_refractory_ms = float(ttl_refractory_ms)
+        self.pulse_n = max(int(round(self.fs * self.ttl_output_ms / 1000.0)), 1)
+        self.refractory_n = max(int(round(self.fs * self.ttl_refractory_ms / 1000.0)), 0)
         self._pulse_left = 0
         self._refrac_left = 0
         self._prev_both = False
@@ -100,6 +102,19 @@ class GroupRuntime:
         self.score["over_threshold"] = last_ok
         self.score["ttl"] = outs[-1] if outs else False
         return outs
+
+    def retarget_fs(self, fs: float) -> None:
+        """Retune pulse lengths when the delivered sample rate replaces nominal fs."""
+        fs = float(fs)
+        if not (fs > 0):
+            return
+        self.fs = fs
+        self.pulse_n = max(int(round(fs * self.ttl_output_ms / 1000.0)), 1)
+        self.refractory_n = max(int(round(fs * self.ttl_refractory_ms / 1000.0)), 0)
+        if self._pulse_left > self.pulse_n:
+            self._pulse_left = self.pulse_n
+        if self._refrac_left > self.refractory_n:
+            self._refrac_left = self.refractory_n
 
     def on_epoch(self, eeg: np.ndarray, emg: np.ndarray, scorer: StateScorer) -> dict:
         scored = scorer.score(

@@ -14,6 +14,7 @@ from nifpga import Session
 from nifpga.bitfile import Bitfile
 
 from config import DEFAULT_BITFILE, DEFAULT_DEVICE_KEY, DEVICES, RTDevice
+from timebase import commit_period_us
 
 FIFO_NAME = "FIFO_AIO"
 RUN_REG = "Run"
@@ -151,6 +152,8 @@ class FpgaDaq:
         self._fpga_running = False
         self._fifo_depth = DEFAULT_FIFO_DEPTH
         self._want_run = not no_run
+        self.period_readback: int | None = None
+        self.period_detail = ""
         self._prepare_idle()
 
     def _prepare_idle(self) -> None:
@@ -241,7 +244,17 @@ class FpgaDaq:
                     _raise_mapped(exc2)
             self._fifo_started = True
             self._leftover = []
-            self.session.registers[PERIOD_REG].write(int(period_us))
+            # Host writes microseconds. Do not rescale: 5000 ticks at 40 MHz
+            # would be 8 kHz, and a ~75 Hz delivery with a matched readback is
+            # not an integer tick conversion. See timebase.py.
+            try:
+                self.period_readback, self.period_detail = commit_period_us(
+                    self.session.registers[PERIOD_REG], int(period_us)
+                )
+            except Exception:
+                _ignore(fifo.stop)
+                self._fifo_started = False
+                raise
             self.session.registers[RUN_REG].write(True)
             return self._fifo_depth
         except Exception as exc:

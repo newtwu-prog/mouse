@@ -15,6 +15,7 @@ from processing.groups import GroupSetting
 from processing.runtime import GroupRuntime
 from processing.state import StateScorer
 from protocol.messages import DataPacket, GroupData
+from timebase import RateFollow
 
 
 EmitFn = Callable[[DataPacket], None]
@@ -170,7 +171,10 @@ class RtTargetEngine:
                 if self._daq is not None:
                     with self._lock:
                         depth = self._daq.start(period_us=cfg.period_us)
-                    self._log(f"acquisition started  fs={fs:.1f} Hz  FIFO depth={depth}")
+                    self._log(
+                        f"acquisition started  nominal_fs={fs:.1f} Hz  "
+                        f"{self._daq.period_detail}  FIFO depth={depth}"
+                    )
         except Exception as exc:
             self._log(f"start failed: {type(exc).__name__}: {exc}")
             return
@@ -187,6 +191,7 @@ class RtTargetEngine:
             for g in groups
         }
         last_dio = {g.ttl_dio: False for g in groups}
+        follow = RateFollow(fs, cfg.epoch_sec, epoch_n) if self._daq is not None else None
         pending = np.zeros((0, cfg.channels))
         seq = 0
         t0 = time.perf_counter()
@@ -197,6 +202,7 @@ class RtTargetEngine:
             fifo_timeouts = 0
             while not self._stop.is_set():
                 self._consume_pending_groups(runtimes)
+                packet_fs = fs
                 if self.replay_mode:
                     assert self._tdms is not None
                     frames = self._tdms.read_frames(chunk)
@@ -233,6 +239,11 @@ class RtTargetEngine:
                     fifo_timeouts = 0
                     if frames.size == 0:
                         continue
+                    assert follow is not None
+                    packet_fs = follow.observe(
+                        len(frames), time.perf_counter(), scorer, runtimes, self._log
+                    )
+                    epoch_n = follow.epoch_n
 
                 pending = np.vstack([pending, frames]) if pending.size else frames
 
@@ -285,7 +296,7 @@ class RtTargetEngine:
                             ttl_trace=trace[sl],
                         )
                     )
-                packet = DataPacket(elapsed_s=elapsed, seq=seq, fs=fs, groups=gdatas)
+                packet = DataPacket(elapsed_s=elapsed, seq=seq, fs=packet_fs, groups=gdatas)
                 seq += 1
                 if self.on_data:
                     self.on_data(packet)

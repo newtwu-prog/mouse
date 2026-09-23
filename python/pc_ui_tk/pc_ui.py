@@ -1064,10 +1064,15 @@ class PcApp:
             )
         if g is None and not packet.groups:
             return
-        self._plot_fs = packet.fs
-        self._refresh_wave_n(packet.fs)
+        new_fs = float(packet.fs) if packet.fs and packet.fs > 0 else float(self._plot_fs or 200.0)
+        old_fs = float(self._plot_fs or 0.0)
+        if self._energy_d and old_fs > 0 and abs(new_fs - old_fs) / old_fs > 0.01:
+            self._energy_d.clear()
+            self._energy_t.clear()
+        self._plot_fs = new_fs
+        self._refresh_wave_n(new_fs)
         for gd in packet.groups:
-            self._append_group_waves(gd, packet.fs)
+            self._append_group_waves(gd, new_fs)
         self._redraw_waves()
         npts = 0
         if self._waves:

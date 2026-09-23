@@ -44,7 +44,13 @@ class WaveStore:
 
     def append_packet(self, packet: DataPacket) -> None:
         if packet.fs and packet.fs > 0:
-            self.fs = float(packet.fs)
+            new_fs = float(packet.fs)
+            # Band edges were built at the previous rate. Rebuild when the RT
+            # stamp switches from nominal 1e6/period_us to the measured rate.
+            if self._energy_d and abs(new_fs - self.fs) / max(self.fs, 1e-9) > 0.01:
+                self._energy_d.clear()
+                self._energy_t.clear()
+            self.fs = new_fs
         for group in packet.groups:
             self._ensure(group.name)
             delta = self._energy_d[group.name].process(group.eeg)
