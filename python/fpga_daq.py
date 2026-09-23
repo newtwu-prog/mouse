@@ -10,11 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from nifpga import Session
+from nifpga import FpgaViState, Session
 from nifpga.bitfile import Bitfile
 
 from config import DEFAULT_BITFILE, DEFAULT_DEVICE_KEY, DEVICES, RTDevice
-from timebase import commit_period_us
+from timebase import commit_period_us, vi_restart_for_period
 
 FIFO_NAME = "FIFO_AIO"
 RUN_REG = "Run"
@@ -154,6 +154,7 @@ class FpgaDaq:
         self._want_run = not no_run
         self.period_readback: int | None = None
         self.period_detail = ""
+        self.period_restart_note = ""
         self._prepare_idle()
 
     def _prepare_idle(self) -> None:
@@ -215,14 +216,42 @@ class FpgaDaq:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
+    def _commit_period(self, period_us: int) -> tuple[int, str]:
+        return commit_period_us(self.session.registers[PERIOD_REG], int(period_us))
+
+    def _vi_is_running(self) -> bool:
+        try:
+            return self.session.fpga_vi_state == FpgaViState.Running
+        except Exception as exc:
+            _raise_mapped(exc)
+            return False
+
+    def _abort_running_vi_keep_controls(self) -> None:
+        """Stop the VI without reset()/download(), which restore bitfile defaults."""
+        restart, note = vi_restart_for_period(self.resource, self._vi_is_running())
+        self.period_restart_note = note
+        if not restart:
+            return
+        try:
+            self.session.abort()
+        except Exception as exc:
+            _raise_mapped(exc)
+        self._fpga_running = False
+
     def start(self, period_us: int = 5000, fifo_depth: int = DEFAULT_FIFO_DEPTH) -> int:
         fifo = self.session.fifos[FIFO_NAME]
         try:
-            # LabVIEW-style host order for remote sessions:
-            # idle Run=False → configure host FIFO once → run VI → StartFifo
-            # → set period → Run=True.
+            # Open(no_run) downloads the bitfile and leaves controls at the
+            # compiled default. Run() does not reload them. Write Count(uSec)
+            # before the VI starts, or a loop that latches the period once
+            # keeps that default (the previous ~75 Hz behavior) and a later
+            # write of 5000 only changes the host register.
+            # Do not scale 5000 into ticks. reset()/download() are not used:
+            # both put the control back to the bitfile default.
             _ignore(lambda: self.session.registers[RUN_REG].write(False))
             self._configure_fifo(fifo_depth)
+            pre_readback, pre_detail = self._commit_period(period_us)
+            self._abort_running_vi_keep_controls()
             self._ensure_fpga_running()
             if self._fifo_started:
                 _ignore(fifo.stop)
@@ -244,17 +273,28 @@ class FpgaDaq:
                     _raise_mapped(exc2)
             self._fifo_started = True
             self._leftover = []
-            # Host writes microseconds. Do not rescale: 5000 ticks at 40 MHz
-            # would be 8 kHz, and a ~75 Hz delivery with a matched readback is
-            # not an integer tick conversion. See timebase.py.
             try:
-                self.period_readback, self.period_detail = commit_period_us(
-                    self.session.registers[PERIOD_REG], int(period_us)
-                )
+                # Second write: in case anything between the pre-run commit and
+                # FIFO start touched the register. The value is still period_us
+                # microseconds (5000 → 200 Hz), not a guessed slower count.
+                post_readback, post_detail = self._commit_period(period_us)
             except Exception:
                 _ignore(fifo.stop)
                 self._fifo_started = False
                 raise
+            if pre_readback != post_readback:
+                _ignore(fifo.stop)
+                self._fifo_started = False
+                raise RuntimeError(
+                    f"Count(uSec) changed across VI start: before run {pre_readback},"
+                    f" after run {post_readback}, requested {int(period_us)}."
+                    f" {pre_detail} / {post_detail}"
+                )
+            self.period_readback = post_readback
+            self.period_detail = (
+                f"{pre_detail} [before VI run]; {post_detail} [before Run=True]"
+                f"{self.period_restart_note}"
+            )
             self.session.registers[RUN_REG].write(True)
             return self._fifo_depth
         except Exception as exc:

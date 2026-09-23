@@ -11,6 +11,8 @@ from timebase import (
     RateFollow,
     commit_period_us,
     describe_period_readback,
+    rate_is_near_nominal,
+    vi_restart_for_period,
 )
 
 
@@ -152,7 +154,9 @@ class RateFollowTest(unittest.TestCase):
         self.assertAlmostEqual(runtimes["g"].fs, 75.0, places=5)
         self.assertEqual(follow.epoch_n, int(round(75.0 * 12.0)))
         self.assertTrue(any("measured_fs=" in line for line in logs))
-        self.assertTrue(any("bitfile" in line for line in logs))
+        self.assertTrue(any("ASSERTION FAILED" in line for line in logs))
+        self.assertTrue(any("FPGA_DAQ.vi" in line for line in logs))
+        self.assertFalse(follow.rate_ok)
         # Further packets at the same rate do not log again.
         n_logs = len(logs)
         follow.observe(75, 2.0, scorer, runtimes, logs.append)
@@ -168,6 +172,26 @@ class RateFollowTest(unittest.TestCase):
         self.assertAlmostEqual(stamp, 202.0)
         self.assertEqual(scorer.fs, 200.0)
         self.assertEqual(follow.epoch_n, 2400)
+        self.assertTrue(follow.rate_ok)
+
+
+class NominalAssertTest(unittest.TestCase):
+    def test_75_hz_is_not_near_200(self):
+        self.assertFalse(rate_is_near_nominal(75.0, 200.0))
+        self.assertTrue(rate_is_near_nominal(198.0, 200.0))
+        self.assertTrue(rate_is_near_nominal(220.0, 200.0))
+        self.assertFalse(rate_is_near_nominal(221.0, 200.0))
+
+    def test_restart_only_a_running_local_vi(self):
+        restart, note = vi_restart_for_period("RIO0", False)
+        self.assertFalse(restart)
+        self.assertEqual(note, "")
+        restart, note = vi_restart_for_period("RIO0", True)
+        self.assertTrue(restart)
+        self.assertEqual(note, "")
+        restart, note = vi_restart_for_period("rio://192.168.0.110/RIO0", True)
+        self.assertFalse(restart)
+        self.assertIn("rio://", note)
 
 
 if __name__ == "__main__":

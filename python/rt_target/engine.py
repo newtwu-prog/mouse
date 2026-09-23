@@ -172,8 +172,10 @@ class RtTargetEngine:
                     with self._lock:
                         depth = self._daq.start(period_us=cfg.period_us)
                     self._log(
-                        f"acquisition started  nominal_fs={fs:.1f} Hz  "
-                        f"{self._daq.period_detail}  FIFO depth={depth}"
+                        f"acquisition started  required_fs={fs:.1f} Hz"
+                        f" (Count(uSec)={cfg.period_us} µs)  "
+                        f"{self._daq.period_detail}  FIFO depth={depth}. "
+                        f"Wall-clock rate must be near {fs:.1f} Hz."
                     )
         except Exception as exc:
             self._log(f"start failed: {type(exc).__name__}: {exc}")

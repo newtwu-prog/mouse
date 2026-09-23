@@ -139,10 +139,12 @@ class RtEngine:
                 RtUpdate(
                     kind="status",
                     message=(
-                        f"acquisition started  nominal_fs={fs:.1f} Hz  "
+                        f"acquisition started  required_fs={fs:.1f} Hz"
+                        f" (Count(uSec)={cfg.period_us} µs)  "
                         f"{self.daq.period_detail}  "
                         f"state window={cfg.epoch_sec:g}s ({epoch_n} samples)  "
-                        f"FIFO depth={depth}"
+                        f"FIFO depth={depth}. "
+                        f"Wall-clock rate must be near {fs:.1f} Hz."
                     ),
                     snapshot=self.daq.snapshot(),
                 )

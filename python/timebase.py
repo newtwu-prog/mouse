@@ -1,21 +1,27 @@
-"""Sample-period readback and measured delivery rate.
+"""FPGA sample period and a wall-clock check that it really is that rate.
 
-``Count(uSec)`` is written as microseconds (5000 → nominal 200 Hz). Reading it
-back only proves the host register holds that value. A matched readback with a
-delivery rate near 75 Hz is not a host-side unit conversion:
+``Count(uSec)=5000`` means a 200 Hz sample clock on the FPGA, not a plot
+label. The host writes that integer in microseconds and reads it back. It
+does not rewrite the count as ticks or as some other number that would only
+look like 200 Hz:
 
-- 5000 ticks of the 40 MHz FPGA clock would be 8 kHz, not ~75 Hz.
-- An additive loop delay already longer than 5 ms cannot be removed by writing
-  a smaller count.
+- 5000 ticks of the 40 MHz FPGA clock would be 8 kHz, not 200 Hz.
+- A delivery rate near 75 Hz is not an integer rescaling of 5000 µs.
+- If the readback is 5000 and the wall clock is still far from 200 Hz, the
+  bitstream is not waiting ``Count(uSec)`` microseconds. Python cannot
+  rebuild the bitfile; ``FPGA_DAQ.vi`` has to be fixed in LabVIEW FPGA.
 
-Python does not rebuild the LabVIEW bitfile. When the register matches but the
-FIFO does not, packets carry the measured rate so a 1 s plot window matches
-wall-clock time. A true ``period_us`` clock has to be fixed in FPGA_DAQ.vi.
+Measured ``DataPacket.fs`` is a diagnostic and keeps the plot from stretching
+a slow stream a second time. It does not create 200 samples per second.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+
+# Wall-clock rate must land inside this fraction of 1e6/period_us.
+# 75 Hz vs 200 Hz fails; a few percent of scheduler jitter does not.
+NOMINAL_RATE_TOLERANCE = 0.10
 
 
 def _as_period_int(value: object) -> int:
@@ -112,24 +118,57 @@ class MeasuredSampleRate:
         return self.fs
 
 
+def rate_is_near_nominal(
+    measured_hz: float,
+    nominal_hz: float,
+    tolerance: float = NOMINAL_RATE_TOLERANCE,
+) -> bool:
+    """True when the delivered rate is close to 1e6/period_us (200 Hz at 5000 µs)."""
+    if nominal_hz <= 0 or measured_hz <= 0:
+        return False
+    return abs(measured_hz - nominal_hz) / nominal_hz <= tolerance
+
+
+def vi_restart_for_period(resource: str, vi_running: bool) -> tuple[bool, str]:
+    """Whether to abort the VI so the next run() re-reads Count(uSec).
+
+    Abort keeps host-written controls. reset() and download() restore the
+    bitfile default and would wipe the period. Remote rio:// abort often
+    drops the NI-RIO RPC link, so that path is left running and reported.
+    """
+    if not vi_running:
+        return False, ""
+    if str(resource).startswith("rio://"):
+        return False, (
+            " remote rio:// session left running; VI not aborted"
+            " (avoids RpcConnectionError). A bitstream that latches"
+            " Count(uSec) only at VI start keeps the old period until the"
+            " FPGA session is opened locally on the cRIO (RIO0)."
+        )
+    return True, ""
+
+
 def measured_rate_message(meter: MeasuredSampleRate) -> str:
     nominal = meter.nominal
     measured = meter.fs
-    base = (
-        f"實測取樣率 {measured:.2f} Hz（名義 {nominal:.1f} Hz，"
-        f"{meter.samples} samples / {meter.elapsed:.2f}s）。"
-        f" DataPacket.fs 使用實測值。"
-        f" measured_fs={measured:.2f} nominal_fs={nominal:.1f}."
+    stats = (
+        f"measured_fs={measured:.2f} nominal_fs={nominal:.1f} "
+        f"samples={meter.samples} elapsed_s={meter.elapsed:.2f}."
     )
-    if nominal <= 0 or abs(measured - nominal) / nominal <= 0.02:
-        return base + " 實測與名義一致。 Measured rate matches nominal."
+    if rate_is_near_nominal(measured, nominal):
+        return (
+            f"取樣率確認：實測 {measured:.2f} Hz，接近名義 {nominal:.1f} Hz"
+            f"（period_us 對應 1e6/period_us）。 Sample rate OK. {stats}"
+        )
     return (
-        base
-        + " 實測與 1e6/period_us 不符。若 Count(uSec) 讀回已等於要求值，"
-        + " bitfile 迴圈並沒有以該微秒數取樣，需在 LabVIEW FPGA 修正 FPGA_DAQ.vi"
-        + "（Python 無法重編 bitfile）。"
-        + " Measured rate does not match nominal; fix the bitfile separately"
-        + " if a true period_us clock is required."
+        f"取樣率斷言失敗：FPGA 應以約 {nominal:.1f} Hz 取樣"
+        f"（Count(uSec) 為微秒，5000 → 200 Hz），實測只有 {measured:.2f} Hz。"
+        f" 這不是 200 samples/s。若 Count(uSec) 讀回已等於要求值，bitfile 並沒有用"
+        f"該暫存器做 1 µs 計時；Python 不能假造 200 Hz，必須在 LabVIEW FPGA 修改"
+        f" FPGA_DAQ.vi。DataPacket.fs 暫時填實測值，只避免圖再被拉一次，"
+        f"硬體仍然是 {measured:.2f} Hz。"
+        f" ASSERTION FAILED: hardware is not sampling near nominal. {stats}"
+        f" Bitfile is not honoring Count(uSec) as microseconds."
     )
 
 
@@ -160,6 +199,7 @@ class RateFollow:
         self.epoch_n = int(epoch_n)
         self.processing_fs = float(nominal_fs)
         self.announced = False
+        self.rate_ok: bool | None = None
 
     def observe(
         self,
@@ -172,6 +212,7 @@ class RateFollow:
         stamp = self.meter.observe(n_frames, now)
         if self.meter.settled and not self.announced:
             self.announced = True
+            self.rate_ok = rate_is_near_nominal(self.meter.fs, self.meter.nominal)
             log(measured_rate_message(self.meter))
         # Ignore sub-2% jitter so a matched nominal clock does not rebuild epochs.
         if (
@@ -183,8 +224,10 @@ class RateFollow:
                 self.processing_fs, scorer, runtimes, self.epoch_sec
             )
             log(
-                f"判斷時基改為實測 {self.processing_fs:.2f} Hz"
-                f"（epoch={self.epoch_n} samples / {self.epoch_sec:g}s）。"
-                f" judgment clock set to measured fs={self.processing_fs:.2f} Hz"
+                f"判斷暫用實測 {self.processing_fs:.2f} Hz"
+                f"（名義 {self.meter.nominal:.1f} Hz，"
+                f"epoch={self.epoch_n} samples / {self.epoch_sec:g}s）。"
+                f" Judgment is using the delivered rate; this does not make"
+                f" the FPGA sample at nominal."
             )
         return stamp
