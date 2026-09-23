@@ -136,11 +136,37 @@ def _wait(predicate, timeout: float = 4.0) -> bool:
 
 
 def _check_labels(window: MainWindow) -> None:
+    assert window.tabs.count() == 2
+    assert window.tabs.tabText(0) == "1. 量測群組設定"
+    assert window.tabs.tabText(1) == "2. 實驗顯示"
+    assert window.tabs.currentIndex() == 0
+    assert window.session.configured is False
+    assert window.btn_start.isEnabled() is False
+    assert window.groups_page.table.item(0, 9).text() == "CH0"
+    assert window.groups_page.btn_confirm.text() == "套用設定"
     assert window.findChild(QLabel, "statusChip").text()
     assert window.port.text() == "7001"
     assert window.settings.autoscale.isChecked() is False
     assert window.settings.autoscale.text() == "Y軸自動縮放"
     assert window.settings.record_enabled.isChecked() is True
+    before = len(window.groups_page.groups)
+    window.groups_page.btn_add.click()
+    assert len(window.groups_page.groups) == before + 1
+    assert window.session.configured is False
+    window.groups_page.btn_delete.click()
+    assert len(window.groups_page.groups) == before
+    window.groups_page.btn_confirm.click()
+    assert window.session.configured is True
+    window.tabs.setCurrentIndex(1)
+    _pump(0.3)
+    window.experiment.charts.apply_ratio()
+    _pump(0.2)
+    main_h = window.experiment.charts.main.height()
+    mid_h = window.experiment.charts.energy.height()
+    bot_h = window.experiment.charts.emg.height()
+    assert main_h > mid_h * 1.8, (main_h, mid_h, bot_h)
+    assert mid_h >= 70 and bot_h >= 70, (main_h, mid_h, bot_h)
+    assert abs(mid_h - bot_h) < max(mid_h, 1) * 0.35, (main_h, mid_h, bot_h)
     texts = []
     for label in window.findChildren(QLabel):
         texts.append(label.text())
@@ -152,6 +178,8 @@ def _check_labels(window: MainWindow) -> None:
     assert "TTL" in window.experiment.charts.main.getAxis("right").labelText
     assert "TTL" not in window.experiment.charts.main.getAxis("left").labelText
     assert window.experiment.signals.height() <= 90
+    assert window.experiment.live.btn_apply.text() == "即時更新"
+    assert window.experiment.live.mode.itemText(0)
     emg = window.findChild(QCheckBox, "sigEMG")
     eeg = window.findChild(QCheckBox, "sigEEG")
     assert emg is not None and eeg is not None
@@ -202,45 +230,49 @@ def _check_tkinter_import() -> None:
 def main() -> int:
     _check_ttl_labels()
     _check_tkinter_import()
+    from qt_ui.session import DEFAULT_SETTINGS
+
+    original_settings = DEFAULT_SETTINGS.read_bytes()
     app = create_app()
-    _check_memory()
-    server = _FakeRt()
-    server.start()
-    assert server.ready.wait(3), "fake RT did not bind"
-    window = MainWindow()
-    window.resize(1400, 920)
-    window.show()
-    _pump(0.3)
-    _check_labels(window)
-    window.settings.record_enabled.setChecked(False)
-    window.ip.setText("127.0.0.1")
-    window.port.setText(str(server.port))
-    window.btn_conn.click()
-    assert _wait(lambda: window.session.connected), "connect did not complete"
-    assert server.got_config.wait(2), "CONFIG was not sent"
-    window.btn_start.click()
-    assert _wait(lambda: "實驗中" in window.status.text(), 5), window.status.text()
-    assert server.got_start.is_set()
-    assert window.experiment.charts.point_count("group_1", "EEG") > 0
-    assert window.experiment.charts.point_count("group_1", "TTL") > 0
-    assert window.experiment.charts.point_count("group_1", "delta") > 0
-    assert "NREM" in window.experiment.status._cards["group_1"].state.text()
-    shot = Path("/tmp/qt_experiment_page.png")
-    window.grab().save(str(shot))
-    window.tabs.setCurrentIndex(1)
-    _pump(0.2)
-    window.grab().save("/tmp/qt_live_page.png")
-    window.tabs.setCurrentIndex(2)
-    _pump(0.2)
-    window.grab().save("/tmp/qt_groups_page.png")
-    window.btn_stop.click()
-    assert _wait(lambda: server.got_stop.is_set()), "STOP was not sent"
-    window.close()
-    if server.error:
-        raise AssertionError(server.error)
-    print(f"qt smoke ok {shot}")
-    app.processEvents()
-    return 0
+    try:
+        _check_memory()
+        server = _FakeRt()
+        server.start()
+        assert server.ready.wait(3), "fake RT did not bind"
+        window = MainWindow()
+        window.resize(1400, 1080)
+        window.show()
+        _pump(0.3)
+        window.grab().save("/tmp/qt_groups_page.png")
+        _check_labels(window)
+        window.settings.record_enabled.setChecked(False)
+        window.ip.setText("127.0.0.1")
+        window.port.setText(str(server.port))
+        window.btn_conn.click()
+        assert _wait(lambda: window.session.connected), "connect did not complete"
+        assert server.got_config.wait(2), "CONFIG was not sent"
+        window.btn_start.click()
+        assert _wait(lambda: "實驗中" in window.status.text(), 5), window.status.text()
+        assert server.got_start.is_set()
+        assert window.tabs.currentIndex() == 1
+        assert window.experiment.charts.point_count("group_1", "EEG") > 0
+        assert window.experiment.charts.point_count("group_1", "TTL") > 0
+        assert window.experiment.charts.point_count("group_1", "delta") > 0
+        assert "NREM" in window.experiment.status._cards["group_1"].state.text()
+        window.experiment.charts.apply_ratio()
+        _pump(0.2)
+        shot = Path("/tmp/qt_experiment_page.png")
+        window.grab().save(str(shot))
+        window.btn_stop.click()
+        assert _wait(lambda: server.got_stop.is_set()), "STOP was not sent"
+        window.close()
+        if server.error:
+            raise AssertionError(server.error)
+        print(f"qt smoke ok {shot}")
+        app.processEvents()
+        return 0
+    finally:
+        DEFAULT_SETTINGS.write_bytes(original_settings)
 
 
 if __name__ == "__main__":

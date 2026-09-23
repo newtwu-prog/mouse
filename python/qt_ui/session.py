@@ -18,7 +18,14 @@ from PyQt6.QtCore import QObject, pyqtSignal as Signal
 from config import DEFAULT_DEVICE_KEY, DEVICES
 from offline_tdms import OfflineTdmsRunner
 from pc_client import RtTcpClient
-from processing.groups import group_to_dict, load_groups, validate_groups
+from processing.groups import (
+    GroupSetting,
+    group_to_dict,
+    load_groups,
+    normalize_threshold_mode,
+    save_groups,
+    validate_groups,
+)
 from protocol.messages import DEFAULT_PORT, DataPacket
 from recorder import SessionRecorder
 
@@ -67,7 +74,8 @@ class SessionController(QObject):
         loaded, self.settings = load_groups(DEFAULT_SETTINGS)
         self.groups = list(loaded)
         errors = validate_groups(self.groups)
-        self.configured = not errors
+        # Match tkinter: loaded groups are shown, but Start stays off until 套用設定.
+        self.configured = False
         self.load_error = "\n".join(errors)
 
         host = str(self.settings.get("rt_ip") or DEVICES[DEFAULT_DEVICE_KEY].ip)
@@ -80,6 +88,7 @@ class SessionController(QObject):
         self._connecting = False
         self._link_up = False
         self._last_options: RunOptions | None = None
+        self._last_applied_live = self.live_snapshot()
         self._connect_result.connect(self._finish_connect)
 
     @property
@@ -118,9 +127,9 @@ class SessionController(QObject):
         }
 
     def startup_note(self) -> str:
-        if self.configured:
-            return f"已載入 {len(self.groups)} 個群組，可連線 RT。判斷在 RT，PC 只顯示與存檔。"
-        return "群組設定不完整：" + self.load_error
+        if self.load_error:
+            return "群組設定不完整：" + self.load_error
+        return "已載入群組。請在「1. 量測群組設定」按「套用設定」後開始。判斷在 RT，PC 只顯示與存檔。"
 
     def connect_to(self, host: str, port_text: str, options: RunOptions | None = None) -> None:
         if self.offline.running:
@@ -280,6 +289,107 @@ class SessionController(QObject):
         self.statusChanged.emit("離線測試已停止", "idle")
         self.logMessage.emit("離線測試已停止")
         self.buttonsChanged.emit()
+
+    def note_groups_dirty(self, groups: list[GroupSetting]) -> None:
+        self.groups = list(groups)
+        self.configured = False
+        self.buttonsChanged.emit()
+
+    def confirm_groups(self, groups: list[GroupSetting], options: RunOptions) -> str:
+        """Validate, save, and mark the working set applied. Empty string means ok."""
+        errors = validate_groups(groups)
+        if errors:
+            return "\n".join(errors)
+        old = {name: values.copy() for name, values in self._last_applied_live.items()}
+        self.groups = list(groups)
+        extra = self._timing_extra(options)
+        self.settings.update(extra)
+        save_groups(DEFAULT_SETTINGS, self.groups, {**self.settings, **extra})
+        self.configured = True
+        self._remember_live(old)
+        self.buttonsChanged.emit()
+        self.logMessage.emit("已確認量測群組")
+        if self.offline.running:
+            self.offline.update_groups(self.groups)
+            self.logMessage.emit("離線即時參數已套用；從下一批資料開始生效")
+        return ""
+
+    def apply_live(
+        self,
+        name: str,
+        movement: float,
+        theta_delta: float,
+        mode_label: str,
+        threshold_v: float,
+        options: RunOptions,
+    ) -> str:
+        if not self.groups:
+            return "請先在第一分頁建立並套用設定。"
+        if not self.configured:
+            return "請先在第一分頁按「套用設定」。"
+        index = next((i for i, group in enumerate(self.groups) if group.name == name), -1)
+        if index < 0:
+            return f"找不到群組：{name}"
+        try:
+            mode = normalize_threshold_mode(mode_label)
+        except ValueError as exc:
+            return str(exc)
+        old = {key: values.copy() for key, values in self._last_applied_live.items()}
+        current = self.groups[index]
+        self.groups[index] = GroupSetting(
+            name=current.name,
+            eeg_ai=current.eeg_ai,
+            emg_ai=current.emg_ai,
+            movement_threshold=float(movement),
+            theta_delta_threshold=float(theta_delta),
+            target_state=current.target_state,
+            ttl_dio=current.ttl_dio,
+            threshold_v=float(threshold_v),
+            threshold_mode=mode,
+            threshold_n=current.threshold_n,
+        )
+        extra = self._timing_extra(options)
+        self.settings.update(extra)
+        save_groups(DEFAULT_SETTINGS, self.groups, {**self.settings, **extra})
+        self._remember_live(old)
+        if self.client.connected:
+            err = self.push_config(options)
+            if err:
+                return err
+            self.logMessage.emit(f"即時更新已傳送至 RT（{name}）；從下一批資料開始生效")
+        if self.offline.running:
+            self.offline.update_groups(self.groups)
+            self.logMessage.emit(f"離線即時參數已套用（{name}）；從下一批資料開始生效")
+        if not self.client.connected and not self.offline.running:
+            self.logMessage.emit(f"已更新即時參數（{name}）；連線或離線實驗開始後會生效")
+        return ""
+
+    def live_snapshot(self) -> dict[str, dict]:
+        return {
+            group.name: {
+                "movement_threshold": group.movement_threshold,
+                "theta_delta_threshold": group.theta_delta_threshold,
+                "threshold_mode": group.threshold_mode,
+                "threshold_v": group.threshold_v,
+            }
+            for group in self.groups
+        }
+
+    def _timing_extra(self, options: RunOptions) -> dict:
+        return {
+            "sample_period_us": _period_us(options.period_ms),
+            "epoch_sec": float(options.epoch_sec),
+            "ttl_enabled": bool(options.ttl_enabled),
+            "ttl_output_ms": float(options.ttl_output_ms),
+            "ttl_refractory_ms": float(options.ttl_refractory_ms),
+            "record_root": options.record_root.strip(),
+        }
+
+    def _remember_live(self, old: dict[str, dict]) -> None:
+        new = self.live_snapshot()
+        if self.recorder is not None:
+            self.recorder.append_parameter_changes(old, new, source="live_apply")
+        self._last_applied_live = {name: values.copy() for name, values in new.items()}
 
     def push_config(self, options: RunOptions | None) -> str:
         if options is None or not self.client.connected:

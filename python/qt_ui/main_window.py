@@ -1,4 +1,4 @@
-"""Top-level window: connection chrome, experiment page, stub tabs, log."""
+"""Top-level window: connection chrome, group editor, experiment page, log."""
 
 from __future__ import annotations
 
@@ -21,10 +21,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from processing.groups import load_groups, save_groups
 from protocol.messages import DataPacket
-from qt_ui.session import ROOT, TESTDATA, RunOptions, SessionController
+from qt_ui.session import DEFAULT_SETTINGS, ROOT, TESTDATA, RunOptions, SessionController
 from qt_ui.widgets.experiment_page import ExperimentPage
-from qt_ui.widgets.placeholders import GroupsPage, LiveParamsPage
+from qt_ui.widgets.group_editor import GroupEditorPage
 from qt_ui.widgets.settings_row import SettingsRow
 from tdms_replay import inspect_tdms
 
@@ -35,8 +36,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("EEG mice  /  PC（PyQt6）")
-        self.resize(1380, 920)
-        self.setMinimumSize(1180, 780)
+        self.resize(1400, 1080)
+        self.setMinimumSize(1180, 900)
 
         self.session = SessionController()
         fields = self.session.initial_fields()
@@ -58,12 +59,14 @@ class MainWindow(QMainWindow):
         root.addWidget(line)
 
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("mainTabs")
+        self.groups_page = GroupEditorPage(self.session.groups)
         self.experiment = ExperimentPage()
         self.experiment.set_groups(self.session.groups)
-        self.tabs.addTab(self.experiment, "1. 實驗")
-        self.tabs.addTab(LiveParamsPage(self.session.groups), "2. 即時參數")
-        self.tabs.addTab(GroupsPage(self.session.groups), "3. 量測群組")
+        self.tabs.addTab(self.groups_page, "1. 量測群組設定")
+        self.tabs.addTab(self.experiment, "2. 實驗顯示")
         self.tabs.setCurrentIndex(0)
+        self.tabs.currentChanged.connect(self._on_tab)
         root.addWidget(self.tabs, 1)
 
         self._build_log(root)
@@ -138,7 +141,13 @@ class MainWindow(QMainWindow):
         self.settings.record_browse.clicked.connect(self._browse_record)
         self.settings.span.editingFinished.connect(self._apply_span)
         self.settings.autoscale.toggled.connect(self.experiment.set_autoscale)
-        self.settings.plot_group.currentTextChanged.connect(self.experiment.highlight)
+        self.groups_page.changed.connect(self._on_groups_edited)
+        self.groups_page.btn_confirm.clicked.connect(self._confirm_settings)
+        self.groups_page.btn_load.clicked.connect(self._load_settings)
+        self.groups_page.btn_save.clicked.connect(self._save_settings)
+        self.experiment.live.group_changed.connect(self._on_live_group)
+        self.experiment.live.apply_clicked.connect(self._live_update)
+        self.settings.plot_group.currentTextChanged.connect(self._on_plot_group)
         self.session.statusChanged.connect(self._set_status)
         self.session.logMessage.connect(self._log)
         self.session.buttonsChanged.connect(self._sync_buttons)
@@ -184,7 +193,7 @@ class MainWindow(QMainWindow):
         fs = 1_000_000.0 / max(options.period_ms * 1000.0, 1.0)
         self.experiment.reset_waves(fs)
         self.session.start_live(options)
-        self.tabs.setCurrentIndex(0)
+        self.tabs.setCurrentIndex(1)
 
     def _stop(self) -> None:
         self.session.stop_all()
@@ -200,7 +209,7 @@ class MainWindow(QMainWindow):
             fs = 200.0
         self.experiment.reset_waves(fs)
         self.session.start_offline(options)
-        self.tabs.setCurrentIndex(0)
+        self.tabs.setCurrentIndex(1)
 
     def _apply_span(self) -> None:
         try:
@@ -209,6 +218,131 @@ class MainWindow(QMainWindow):
             span = 1.0
             self.settings.span.setText("1")
         self.experiment.set_span(span)
+
+    def _on_tab(self, index: int) -> None:
+        if index == 1:
+            self.experiment.charts.apply_ratio()
+
+    def _on_plot_group(self, name: str) -> None:
+        self.experiment.highlight(name)
+        self.experiment.live.select_group(name)
+
+    def _on_live_group(self, name: str) -> None:
+        if name and name != self.settings.plot_group.currentText():
+            self.settings.plot_group.setCurrentText(name)
+        else:
+            self.experiment.highlight(name)
+
+    def _on_groups_edited(self) -> None:
+        self.session.note_groups_dirty(list(self.groups_page.groups))
+        self.groups_page.set_status("設定已變更，請再按「套用設定」。")
+
+    def _confirm_settings(self) -> None:
+        options = self._options()
+        if options is None:
+            return
+        if self.groups_page._index >= 0 and self.groups_page.groups:
+            self.groups_page._apply_form()
+        err = self.session.confirm_groups(list(self.groups_page.groups), options)
+        if err:
+            QMessageBox.critical(self, "群組設定不完整", err)
+            return
+        self._sync_group_choices()
+        self.experiment.set_groups(self.session.groups)
+        name = self.settings.plot_group.currentText()
+        self.experiment.highlight(name)
+        self.experiment.live.select_group(name)
+        pushed = ""
+        if self.session.connected:
+            pushed = self.session.push_config(options)
+            if not pushed:
+                self._log("即時參數已傳送至 RT；從下一批資料開始生效")
+        self.groups_page.set_status(
+            f"已確認 {len(self.session.groups)} 個群組。可連線 RT，或用下方「開始離線實驗」。"
+        )
+        if pushed:
+            QMessageBox.warning(self, "下發失敗", pushed)
+
+    def _load_settings(self) -> None:
+        path, _selected = QFileDialog.getOpenFileName(
+            self,
+            "載入群組設定",
+            str(DEFAULT_SETTINGS.parent),
+            "JSON (*.json)",
+        )
+        if not path:
+            return
+        self.load_settings_from(Path(path))
+
+    def load_settings_from(self, path: Path) -> None:
+        groups, raw = load_groups(path)
+        self.session.settings.update(raw)
+        if "sample_period_us" in raw:
+            self.settings.period.setText(str(max(int(raw["sample_period_us"]) // 1000, 1)))
+        if "epoch_sec" in raw:
+            self.settings.epoch.setText(str(raw["epoch_sec"]))
+        if "ttl_output_ms" in raw or "ttl_pulse_ms" in raw:
+            self.settings.ttl_out.setText(str(raw.get("ttl_output_ms", raw.get("ttl_pulse_ms", 10.0))))
+        if "ttl_refractory_ms" in raw:
+            self.settings.ttl_ref.setText(str(raw["ttl_refractory_ms"]))
+        if "ttl_enabled" in raw:
+            self.settings.ttl_enabled.setChecked(bool(raw["ttl_enabled"]))
+        self.groups_page.set_groups(groups)
+        self._log(f"已載入 {path}")
+
+    def _save_settings(self) -> None:
+        options = self._options()
+        if options is None:
+            return
+        path, _selected = QFileDialog.getSaveFileName(
+            self,
+            "儲存群組設定",
+            str(DEFAULT_SETTINGS.parent),
+            "JSON (*.json)",
+        )
+        if not path:
+            return
+        save_groups(Path(path), list(self.groups_page.groups), self.session._timing_extra(options))
+        self._log(f"已儲存 {path}")
+
+    def _live_update(self) -> None:
+        options = self._options()
+        if options is None:
+            return
+        if not self.session.configured:
+            QMessageBox.information(self, "尚未套用設定", "請先在第一分頁按「套用設定」。")
+            self.tabs.setCurrentIndex(0)
+            return
+        try:
+            movement, ratio, mode, threshold = self.experiment.live.values()
+        except ValueError:
+            QMessageBox.warning(self, "參數錯誤", "即時參數必須是數字。")
+            return
+        name = self.experiment.live.selected_name()
+        err = self.session.apply_live(name, movement, ratio, mode, threshold, options)
+        if err:
+            QMessageBox.warning(self, "即時更新", err)
+            return
+        self.groups_page.groups = list(self.session.groups)
+        self.groups_page._refresh_table()
+        if self.groups_page.groups:
+            self.groups_page._select_row(min(max(self.groups_page._index, 0), len(self.groups_page.groups) - 1))
+        self.experiment.status.set_groups(self.session.groups)
+        self.experiment.live.set_groups(self.session.groups, selected=name)
+        self.experiment.highlight(self.settings.plot_group.currentText())
+        self.groups_page.set_status(f"已即時更新群組 {name} 的閾值參數。")
+
+    def _sync_group_choices(self) -> None:
+        names = [group.name for group in self.session.groups]
+        current = self.settings.plot_group.currentText()
+        self.settings.plot_group.blockSignals(True)
+        self.settings.plot_group.clear()
+        self.settings.plot_group.addItems(names)
+        if current in names:
+            self.settings.plot_group.setCurrentText(current)
+        elif names:
+            self.settings.plot_group.setCurrentIndex(0)
+        self.settings.plot_group.blockSignals(False)
 
     def _browse_tdms(self) -> None:
         initial = str(TESTDATA if TESTDATA.is_dir() else ROOT)

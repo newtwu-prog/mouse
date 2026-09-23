@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from processing.groups import GroupSetting, ai_label
@@ -10,6 +9,7 @@ from protocol.messages import DataPacket, GroupData
 from qt_ui.theme import STATE_COLOR
 from qt_ui.waves import WaveStore
 from qt_ui.widgets.charts import ExperimentCharts
+from qt_ui.widgets.live_params import LiveParamsPanel
 from qt_ui.widgets.signal_bar import SignalToggleBar
 
 
@@ -65,7 +65,7 @@ class GroupStatusPanel(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("statusPanel")
-        self.setFixedWidth(268)
+        self.setMinimumWidth(280)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(8, 8, 8, 8)
         self._layout.setSpacing(8)
@@ -114,14 +114,22 @@ class ExperimentPage(QWidget):
         left.addWidget(self.charts, 1)
         root.addLayout(left, 1)
 
+        side = QVBoxLayout()
+        side.setSpacing(8)
+        self.live = LiveParamsPanel()
+        self.live.setFixedWidth(280)
         self.status = GroupStatusPanel()
-        root.addWidget(self.status, 0, Qt.AlignmentFlag.AlignTop)
+        self.status.setFixedWidth(280)
+        side.addWidget(self.live, 0)
+        side.addWidget(self.status, 1)
+        root.addLayout(side, 0)
 
         self.signals.visibility_changed.connect(self.redraw)
 
     def set_groups(self, groups: list[GroupSetting]) -> None:
         self.signals.set_groups([g.name for g in groups])
         self.status.set_groups(groups)
+        self.live.set_groups(groups)
         self.waves.reset([g.name for g in groups])
         self.redraw()
 

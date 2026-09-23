@@ -6,7 +6,8 @@ import math
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QSizePolicy, QSplitter, QVBoxLayout, QWidget
 
 from qt_ui.theme import TRACE_COLOR
 
@@ -83,15 +84,27 @@ class ExperimentCharts(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 2, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        self.main = self._plot(nbins=6)
-        self.energy = self._plot(nbins=5)
-        self.emg = self._plot(nbins=5)
-        layout.addWidget(self.main, 32)
-        layout.addWidget(self.energy, 11)
-        layout.addWidget(self.emg, 11)
+        # tk gridspec uses height_ratios [3.2, 1.1, 1.1]. Minimums stay small so a
+        # short tab cannot force the top plot to paint over the ones below it.
+        self.main = self._plot(nbins=6, min_height=140)
+        self.energy = self._plot(nbins=5, min_height=72)
+        self.emg = self._plot(nbins=5, min_height=72)
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.setObjectName("chartSplitter")
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(14)
+        self.splitter.addWidget(self.main)
+        self.splitter.addWidget(self.energy)
+        self.splitter.addWidget(self.emg)
+        self.splitter.setStretchFactor(0, 32)
+        self.splitter.setStretchFactor(1, 11)
+        self.splitter.setStretchFactor(2, 11)
+        layout.addWidget(self.splitter, 1)
+        self._ratio_applied = False
+        self._applying_ratio = False
 
         self.main.setLabel("left", "EEG / EMG (V)")
         self.energy.setLabel("left", "energy")
@@ -139,7 +152,33 @@ class ExperimentCharts(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
+        self.apply_ratio()
         self._sync_ttl_view()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self._applying_ratio:
+            return
+        self.apply_ratio()
+
+    def apply_ratio(self) -> None:
+        """Top trace gets 3.2 parts; energy and EMG get 1.1 each."""
+        if self._applying_ratio:
+            return
+        height = self.splitter.height()
+        handles = self.splitter.handleWidth() * 2
+        usable = height - handles
+        if usable < 160:
+            return
+        top = int(usable * 32 / 54)
+        mid = int(usable * 11 / 54)
+        bottom = max(usable - top - mid, 1)
+        self._applying_ratio = True
+        try:
+            self.splitter.setSizes([top, mid, bottom])
+        finally:
+            self._applying_ratio = False
+        self._ratio_applied = True
 
     def redraw(self, store, visible: dict[str, dict[str, bool]], *, autoscale: bool) -> None:
         fs = max(float(store.fs or 200.0), 1e-6)
@@ -195,7 +234,7 @@ class ExperimentCharts(QWidget):
         self._refresh_legends(legend_rows)
         self._sync_ttl_view()
 
-    def _plot(self, nbins: int) -> pg.PlotWidget:
+    def _plot(self, nbins: int, min_height: int) -> pg.PlotWidget:
         plot = pg.PlotWidget(axisItems={"left": SpanAxis("left", nbins=nbins)})
         plot.setBackground("w")
         plot.showGrid(x=True, y=True, alpha=0.28)
@@ -203,7 +242,8 @@ class ExperimentCharts(QWidget):
         plot.setMenuEnabled(False)
         plot.hideButtons()
         plot.getAxis("left").setWidth(62)
-        plot.setMinimumHeight(90)
+        plot.setMinimumHeight(min_height)
+        plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         return plot
 
     def _install_ttl_axis(self) -> None:

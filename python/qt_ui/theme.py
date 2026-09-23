@@ -218,7 +218,9 @@ QHeaderView::section {
     border-bottom: 1px solid #d0d7e2;
     font-weight: 600;
 }
-QSplitter::handle {
-    background: transparent;
+QSplitter#chartSplitter::handle {
+    background: #d5dde6;
+    margin: 3px 8px;
+    border-radius: 2px;
 }
 """
