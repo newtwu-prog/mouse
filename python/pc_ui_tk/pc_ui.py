@@ -2,7 +2,8 @@
 
 Also supports offline TDMS replay (no cRIO / no TCP) via 「載入 TDMS…」.
 
-    py -3.11 python/pc_ui.py
+    py -3.11 python/pc_ui_tk/pc_ui.py
+    python/pc_ui_tk/pc_ui.bat
 
 RT agent (on cRIO or local simulate):
     py -3.11 python/rt_target/main.py --simulate
@@ -23,7 +24,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.ticker import FormatStrFormatter, MaxNLocator
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+PYTHON = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PYTHON))
 
 from config import DEFAULT_DEVICE_KEY, DEVICES
 from offline_tdms import OfflineTdmsRunner
@@ -45,7 +47,7 @@ from recorder import SessionRecorder
 from tdms_replay import inspect_tdms
 from ui_groups import GroupSettingsPanel
 
-ROOT = Path(__file__).resolve().parent
+ROOT = PYTHON
 DEFAULT_SETTINGS = ROOT / "settings" / "default_groups.json"
 RECORD_ROOT = ROOT / "recordings"
 TESTDATA = ROOT / "testdata"

@@ -1,13 +1,13 @@
-"""Launch the PyQt6 PC UI. The tkinter app is unchanged.
+"""Launch the PyQt6 PC UI. The tkinter app stays in python/pc_ui_tk.
 
-Tkinter (existing):
-    py -3.11 python/pc_ui.py
-    python/pc_ui.bat
+Tkinter:
+    py -3.11 python/pc_ui_tk/pc_ui.py
+    python/pc_ui_tk/pc_ui.bat
 
 PyQt6:
-    py -3.11 python/qt_pc_ui.py
-    python/qt_pc_ui.bat
-    python -m qt_ui          # from the python/ directory
+    py -3.11 python/pc_ui_qt/qt_pc_ui.py
+    python/pc_ui_qt/qt_pc_ui.bat
+    python/pc_ui_qt/qt_pc_ui.sh
 """
 
 from __future__ import annotations
@@ -15,9 +15,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+HERE = Path(__file__).resolve().parent
+PYTHON = HERE.parent
+for folder in (PYTHON, HERE):
+    text = str(folder)
+    if text not in sys.path:
+        sys.path.insert(0, text)
 
 
 def main() -> int:

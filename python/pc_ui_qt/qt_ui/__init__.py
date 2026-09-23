@@ -1,4 +1,4 @@
-"""PyQt6 PC experiment UI. Tkinter entry points stay in pc_ui.py / ui_app.py."""
+"""PyQt6 PC experiment UI. Tkinter entry point is python/pc_ui_tk/pc_ui.py."""
 
 __all__ = ["main"]
 

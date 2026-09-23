@@ -205,7 +205,7 @@ def main() -> int:
     client.close()
     print("\nDone.")
     if args.start:
-        print(f"On PC: py -3.11 python/pc_ui.py  → connect {args.host}:{args.port}")
+        print(f"On PC: py -3.11 python/pc_ui_tk/pc_ui.py  → connect {args.host}:{args.port}")
     else:
         print("Uploaded only. To start: py -3.11 python/deploy_crio.py --skip-upload --skip-pip --stop-labview --start")
     return 0

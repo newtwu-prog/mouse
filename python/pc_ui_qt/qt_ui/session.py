@@ -29,7 +29,7 @@ from processing.groups import (
 from protocol.messages import DEFAULT_PORT, DataPacket
 from recorder import SessionRecorder
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SETTINGS = ROOT / "settings" / "default_groups.json"
 RECORD_ROOT = ROOT / "recordings"
 TESTDATA = ROOT / "testdata"

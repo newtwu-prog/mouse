@@ -1,6 +1,6 @@
 """Headless smoke check for the PyQt6 experiment page and the tkinter import.
 
-    python -m qt_ui.smoke
+    python python/pc_ui_qt/qt_ui/smoke.py
 """
 
 from __future__ import annotations
@@ -14,9 +14,13 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+_QT_UI = Path(__file__).resolve().parent
+_PC_UI_QT = _QT_UI.parent
+ROOT = _PC_UI_QT.parent
+for folder in (ROOT, _PC_UI_QT, ROOT / "pc_ui_tk"):
+    text = str(folder)
+    if text not in sys.path:
+        sys.path.insert(0, text)
 
 import numpy as np
 from PyQt6.QtWidgets import QApplication, QCheckBox, QLabel, QMessageBox
