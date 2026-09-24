@@ -37,6 +37,7 @@ from fpga_daq import (
 from processing.groups import load_groups
 from processing.runtime import GroupRuntime
 from processing.state import StateScorer
+from timebase import RateFollow, ai_outside_frame
 
 DEFAULT_SETTINGS = Path(__file__).resolve().parent / "settings" / "default_groups.json"
 
@@ -150,6 +151,10 @@ def main() -> int:
     if not args.no_plot:
         plt, fig, axes = _try_plot()
 
+    unfit = ai_outside_frame(groups, args.channels)
+    if unfit:
+        print(unfit)
+        return 1
     samples_per_read = max(args.channels * 20, args.channels)
     pending = np.zeros((0, args.channels))
     t0 = time.perf_counter()
@@ -160,8 +165,12 @@ def main() -> int:
         try:
             depth = daq.start(period_us=period_us)
             print(f"  FIFO depth : {depth}")
+            print(f"  period     : {daq.period_detail}")
             print(f"  snapshot   : {daq.snapshot()}")
             print()
+            follow = RateFollow(
+                fs, epoch_sec, epoch_n, period_us=period_us, frame_width=args.channels
+            )
             while True:
                 if deadline is not None and time.perf_counter() >= deadline:
                     break
@@ -170,6 +179,10 @@ def main() -> int:
                 )
                 if frames.size == 0:
                     continue
+                display_fs = follow.observe(
+                    len(frames), time.perf_counter(), scorer, runtimes, print
+                )
+                epoch_n = follow.epoch_n
                 pending = np.vstack([pending, frames]) if pending.size else frames
 
                 for g in groups:
@@ -201,7 +214,10 @@ def main() -> int:
                             f" td={s['theta_delta']:.2f}"
                         )
                     elapsed = now - t0
-                    print(f"  t={elapsed:7.2f}s  fifo={remaining:5d}  " + "  ".join(parts))
+                    print(
+                        f"  t={elapsed:7.2f}s  fs={display_fs:.2f}  fifo={remaining:5d}  "
+                        + "  ".join(parts)
+                    )
                     if plt is not None and groups and judged:
                         g0 = groups[0]
                         _update_plot(
@@ -209,7 +225,7 @@ def main() -> int:
                             axes,
                             epoch[:, g0.eeg_ai],
                             epoch[:, g0.emg_ai],
-                            fs,
+                            display_fs,
                             runtimes[g0.name].history,
                             f"{g0.name}  {runtimes[g0.name].score['state']}",
                         )

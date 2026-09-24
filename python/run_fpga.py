@@ -90,6 +90,7 @@ def main() -> int:
         try:
             actual_depth = daq.start(period_us=args.period_us)
             print(f"  FIFO host depth : {actual_depth}")
+            print(f"  period          : {daq.period_detail}")
             print(f"  snapshot        : {daq.snapshot()}")
             print()
 
