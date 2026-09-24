@@ -7,10 +7,12 @@ flow. The value is microseconds and is read back. It is not rewritten as
 ticks or as some other count that would only look like the requested rate:
 
 - 5000 ticks of the 40 MHz FPGA clock would be 8 kHz, not 200 Hz.
-- A delivery rate near 75 Hz is not an integer rescaling of 5000 µs.
-- If the readback is 5000 and the wall clock is still far from 200 Hz, the
-  bitstream is not waiting ``Count(uSec)`` microseconds. Python cannot
-  rebuild the bitfile; ``FPGA_DAQ.vi`` has to be fixed in LabVIEW FPGA.
+- A wall-clock rate of 75 Hz with ``Count(uSec)=5000`` is what you get by
+  splitting a 6-element frame as 16: 200 Hz × 6 / 16 = 75. The FPGA is
+  still at 200 Hz; the host frame width is wrong.
+- If the readback matches and the rate is still far off after the frame
+  width is correct, the bitstream is not waiting ``Count(uSec)``
+  microseconds. Python cannot rebuild the bitfile.
 
 Measured ``DataPacket.fs`` is a diagnostic and keeps the plot from stretching
 a slow stream a second time. It does not create 200 samples per second.
@@ -87,9 +89,11 @@ class MeasuredSampleRate:
         min_elapsed: float = 1.0,
         min_samples: int = 40,
         period_us: int | None = None,
+        frame_width: int | None = None,
     ) -> None:
         self.nominal = float(nominal_fs)
         self.period_us = _requested_period_us(self.nominal, period_us)
+        self.frame_width = int(frame_width) if frame_width else 0
         self.fs = float(nominal_fs)
         self.min_elapsed = float(min_elapsed)
         self.min_samples = int(min_samples)
@@ -128,6 +132,90 @@ def _requested_period_us(nominal_fs: float, period_us: int | None) -> int:
     if nominal_fs <= 0:
         return 5000
     return max(int(round(1_000_000.0 / float(nominal_fs))), 1)
+
+
+def frame_rate_hz(elements_per_s: float, frame_width: int) -> float:
+    """Frames per second from a FIFO element rate and elements per frame.
+
+    LabVIEW reads ``FIFO_AIO`` with Number of Elements = 6, so one frame is
+    6 interleaved samples. 1200 elements/s at width 6 is 200 Hz. The same
+    stream counted with width 16 is 75 Hz.
+    """
+    width = int(frame_width)
+    if width <= 0:
+        raise ValueError(f"frame width must be positive, got {frame_width}")
+    return float(elements_per_s) / width
+
+
+def split_interleaved_frames(
+    samples,
+    frame_width: int,
+    leftover: list[float] | tuple[float, ...] = (),
+) -> tuple[list[list[float]], list[float]]:
+    """Pack a FIFO element stream into rows of ``frame_width``.
+
+    Channel 0 of the next frame is element ``frame_width``, not element 16.
+    A short tail stays in ``leftover`` so the next read stays aligned.
+    """
+    width = int(frame_width)
+    if width <= 0:
+        raise ValueError(f"frame width must be positive, got {frame_width}")
+    combined = [float(v) for v in leftover]
+    combined.extend(float(v) for v in samples)
+    usable = (len(combined) // width) * width
+    frames = [combined[i : i + width] for i in range(0, usable, width)]
+    return frames, combined[usable:]
+
+
+def frame_width_mismatch_warning(
+    measured_hz: float,
+    nominal_hz: float,
+    assumed_width: int,
+) -> str:
+    """Name a likely elements-per-frame mistake when the rate ratio is integral."""
+    if (
+        nominal_hz <= 0
+        or measured_hz <= 0
+        or assumed_width <= 0
+        or rate_is_near_nominal(measured_hz, nominal_hz)
+    ):
+        return ""
+    implied = assumed_width * measured_hz / nominal_hz
+    nearest = int(round(implied))
+    if nearest >= 1 and nearest != assumed_width and abs(implied - nearest) / nearest <= 0.05:
+        return (
+            f"幀寬可能不對：目前把每 {assumed_width} 個 FIFO 元素當成一幀，"
+            f"實測/名義 = {measured_hz:.1f}/{nominal_hz:.1f} ≈ {nearest}/{assumed_width}。"
+            f" LabVIEW 的 FIFO_AIO.Read 是每幀 6 個元素；"
+            f"200 Hz × 6 / 16 = 75 Hz。"
+            f" Possible frame-width mismatch: assumed {assumed_width} elements/frame,"
+            f" implied {nearest}."
+        )
+    return (
+        f"實測 {measured_hz:.1f} Hz 與 Count(uSec) 的 {nominal_hz:.1f} Hz 差很多。"
+        f" 請確認 FIFO 每幀元素數（目前假設 {assumed_width}）。"
+        f" Check FIFO frame width (assumed {assumed_width} elements/frame)."
+    )
+
+
+def ai_outside_frame(groups, frame_width: int) -> str:
+    """Empty when every group's EEG/EMG index fits in one FIFO frame."""
+    width = int(frame_width)
+    bad: list[str] = []
+    for group in groups:
+        eeg = int(getattr(group, "eeg_ai"))
+        emg = int(getattr(group, "emg_ai"))
+        name = str(getattr(group, "name", "?"))
+        if eeg < 0 or emg < 0 or eeg >= width or emg >= width:
+            bad.append(f"{name} EEG=AI{eeg} EMG=AI{emg}")
+    if not bad:
+        return ""
+    last = max(width - 1, 0)
+    return (
+        f"FIFO 每幀 {width} 個元素（AI0–AI{last}），"
+        f"群組通道超出範圍：{', '.join(bad)}。"
+        f" Group AI index is outside the FIFO frame width {width}."
+    )
 
 
 def rate_is_near_nominal(
@@ -174,13 +262,15 @@ def measured_rate_message(meter: MeasuredSampleRate) -> str:
             f"取樣率確認：實測 {measured:.2f} Hz，接近要求的 {nominal:.1f} Hz"
             f"（Count(uSec)={period} µs）。 Sample rate OK. {stats}"
         )
+    hint = frame_width_mismatch_warning(measured, nominal, meter.frame_width)
+    hint_text = f" {hint}" if hint else ""
     return (
-        f"取樣率斷言失敗：FPGA 應以約 {nominal:.1f} Hz 取樣"
-        f"（Count(uSec)={period} µs），實測只有 {measured:.2f} Hz。"
-        f" 若讀回已等於 {period}，bitfile 並沒有用該微秒數計時；"
+        f"取樣率斷言失敗：要求約 {nominal:.1f} Hz"
+        f"（Count(uSec)={period} µs），實測 {measured:.2f} Hz。"
+        f"{hint_text}"
+        f" 若讀回已等於 {period} 且幀寬正確，才是 bitfile 沒有用該微秒數計時；"
         f"Python 不能改寫另一個 count 來假造這個速率，必須在 LabVIEW FPGA 修改"
-        f" FPGA_DAQ.vi。DataPacket.fs 暫時填實測值，只讓圖對齊真實間隔，"
-        f"硬體仍然是 {measured:.2f} Hz。"
+        f" FPGA_DAQ.vi。DataPacket.fs 暫時填實測值，只讓圖對齊真實間隔。"
         f" ASSERTION FAILED: hardware is not sampling near the requested period. {stats}"
         f" Bitfile is not honoring Count(uSec) as microseconds."
     )
@@ -206,12 +296,14 @@ class RateFollow:
         min_elapsed: float = 1.0,
         min_samples: int = 40,
         period_us: int | None = None,
+        frame_width: int | None = None,
     ) -> None:
         self.meter = MeasuredSampleRate(
             nominal_fs,
             min_elapsed=min_elapsed,
             min_samples=min_samples,
             period_us=period_us,
+            frame_width=frame_width,
         )
         self.epoch_sec = float(epoch_sec)
         self.epoch_n = int(epoch_n)

@@ -14,7 +14,7 @@ from nifpga import FpgaViState, Session
 from nifpga.bitfile import Bitfile
 
 from config import DEFAULT_BITFILE, DEFAULT_DEVICE_KEY, DEVICES, RTDevice
-from timebase import commit_period_us, vi_restart_for_period
+from timebase import commit_period_us, split_interleaved_frames, vi_restart_for_period
 
 FIFO_NAME = "FIFO_AIO"
 RUN_REG = "Run"
@@ -23,9 +23,13 @@ TIMEOUT_REG = "Timed Out?"
 AI0_REG = "Mod1/AI0"
 DIO_REGS = ("DIO0 tirg", "DIO1 tirg", "DIO2 tirg")
 
-# NI 9220 on slot 1 has 16 analog channels. FIFO_AIO is a packed FXP stream
-# (signed 26-bit, 5 integer bits, range +/-16 V). Host reads volts.
-DEFAULT_CHANNELS = 16
+# NI 9220 on slot 1 has 16 inputs, but FIFO_AIO on this bitfile interleaves
+# 6 elements per FPGA sample (signed 26-bit FXP, 5 integer bits, +/-16 V).
+# LabVIEW RT_main.vi reads FIFO_AIO with Number of Elements = 6, and 200 of
+# those frames are exactly 4 cycles of a 4 Hz sine. Splitting the same stream
+# every 16 elements reports 200 Hz * 6 / 16 = 75 frames/s and mixes channels.
+FIFO_FRAME_WIDTH = 6
+DEFAULT_CHANNELS = FIFO_FRAME_WIDTH
 DEFAULT_FIFO_DEPTH = 100_000
 
 
@@ -329,14 +333,12 @@ class FpgaDaq:
         if not hasattr(self, "_leftover"):
             self._leftover = []
         volts, remaining = self.read_volts(count, timeout_ms=timeout_ms)
-        combined = self._leftover + volts
-        n = (len(combined) // channels) * channels
+        rows, self._leftover = split_interleaved_frames(volts, channels, self._leftover)
         frames = (
-            np.asarray(combined[:n], dtype=float).reshape(-1, channels)
-            if n
+            np.asarray(rows, dtype=float)
+            if rows
             else np.zeros((0, channels))
         )
-        self._leftover = combined[n:]
         return frames, remaining
 
     def write_dio(self, channel: int, value: bool) -> None:

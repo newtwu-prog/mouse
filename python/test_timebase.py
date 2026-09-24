@@ -9,9 +9,13 @@ import numpy as np
 from timebase import (
     MeasuredSampleRate,
     RateFollow,
+    ai_outside_frame,
     commit_period_us,
     describe_period_readback,
+    frame_rate_hz,
+    frame_width_mismatch_warning,
     rate_is_near_nominal,
+    split_interleaved_frames,
     vi_restart_for_period,
 )
 
@@ -226,6 +230,67 @@ class NominalAssertTest(unittest.TestCase):
         restart, note = vi_restart_for_period("rio://192.168.0.110/RIO0", True)
         self.assertFalse(restart)
         self.assertIn("rio://", note)
+
+
+class _Group:
+    def __init__(self, name, eeg_ai, emg_ai):
+        self.name = name
+        self.eeg_ai = eeg_ai
+        self.emg_ai = emg_ai
+
+
+class FrameWidthTest(unittest.TestCase):
+    def test_six_wide_stream_is_200_hz_not_75(self):
+        self.assertEqual(frame_rate_hz(1200, 6), 200.0)
+        self.assertEqual(frame_rate_hz(1200, 16), 75.0)
+        # 200 frames/s * 6 elements, mis-counted as 16-wide, is the measured 75 Hz.
+        self.assertAlmostEqual(200.0 * 6 / 16, 75.0)
+
+    def test_channel_zero_is_every_sixth_element(self):
+        samples = [0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 14, 15]
+        frames, rest = split_interleaved_frames(samples, 6)
+        self.assertEqual(rest, [])
+        self.assertEqual(frames[0][0], 0)
+        self.assertEqual(frames[1][0], 10)
+        self.assertEqual(frames[0][5], 5)
+        # A 16-wide read of the same 12 elements is not one frame, and the
+        # tail must stay put instead of being called channel 0 of a new row.
+        wide, tail = split_interleaved_frames(samples, 16)
+        self.assertEqual(wide, [])
+        self.assertEqual(tail, samples)
+
+    def test_leftover_keeps_alignment(self):
+        first, tail = split_interleaved_frames([0, 1, 2, 3], 6)
+        self.assertEqual(first, [])
+        frames, rest = split_interleaved_frames([4, 5, 6], 6, tail)
+        self.assertEqual(frames, [[0, 1, 2, 3, 4, 5]])
+        self.assertEqual(rest, [6])
+
+    def test_width_16_against_200_hz_warns_about_6(self):
+        warning = frame_width_mismatch_warning(75.0, 200.0, 16)
+        self.assertIn("6", warning)
+        self.assertIn("16", warning)
+        self.assertIn("75", warning)
+        self.assertEqual(frame_width_mismatch_warning(200.0, 200.0, 6), "")
+
+    def test_mismatch_log_names_frame_width(self):
+        follow = RateFollow(
+            200.0, epoch_sec=12.0, epoch_n=2400, period_us=5000, frame_width=16
+        )
+        scorer = _Scorer(200.0)
+        runtimes = {"g": _Runtime(200.0)}
+        logs: list[str] = []
+        follow.observe(1, 0.0, scorer, runtimes, logs.append)
+        follow.observe(75, 1.0, scorer, runtimes, logs.append)
+        text = "\n".join(logs)
+        self.assertIn("ASSERTION FAILED", text)
+        self.assertIn("implied 6", text)
+
+    def test_ai_index_must_fit_in_the_frame(self):
+        ok = [_Group("g", 0, 1)]
+        self.assertEqual(ai_outside_frame(ok, 6), "")
+        bad = [_Group("g", 0, 7)]
+        self.assertIn("AI7", ai_outside_frame(bad, 6))
 
 
 if __name__ == "__main__":

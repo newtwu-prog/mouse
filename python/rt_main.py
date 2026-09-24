@@ -37,7 +37,7 @@ from fpga_daq import (
 from processing.groups import load_groups
 from processing.runtime import GroupRuntime
 from processing.state import StateScorer
-from timebase import RateFollow
+from timebase import RateFollow, ai_outside_frame
 
 DEFAULT_SETTINGS = Path(__file__).resolve().parent / "settings" / "default_groups.json"
 
@@ -151,6 +151,10 @@ def main() -> int:
     if not args.no_plot:
         plt, fig, axes = _try_plot()
 
+    unfit = ai_outside_frame(groups, args.channels)
+    if unfit:
+        print(unfit)
+        return 1
     samples_per_read = max(args.channels * 20, args.channels)
     pending = np.zeros((0, args.channels))
     t0 = time.perf_counter()
@@ -164,7 +168,9 @@ def main() -> int:
             print(f"  period     : {daq.period_detail}")
             print(f"  snapshot   : {daq.snapshot()}")
             print()
-            follow = RateFollow(fs, epoch_sec, epoch_n, period_us=period_us)
+            follow = RateFollow(
+                fs, epoch_sec, epoch_n, period_us=period_us, frame_width=args.channels
+            )
             while True:
                 if deadline is not None and time.perf_counter() >= deadline:
                     break

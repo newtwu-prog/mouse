@@ -15,7 +15,7 @@ from processing.groups import GroupSetting
 from processing.runtime import GroupRuntime
 from processing.state import StateScorer
 from protocol.messages import DataPacket, GroupData
-from timebase import RateFollow
+from timebase import RateFollow, ai_outside_frame
 
 
 EmitFn = Callable[[DataPacket], None]
@@ -154,6 +154,10 @@ class RtTargetEngine:
         fs = 1_000_000.0 / cfg.period_us
         chunk = max(int(cfg.stream_samples), 1)
         samples_per_read = max(cfg.channels * chunk, cfg.channels)
+        unfit = ai_outside_frame(groups, cfg.channels)
+        if unfit:
+            self._log(unfit)
+            return
 
         try:
             if self.replay_mode:
@@ -173,7 +177,8 @@ class RtTargetEngine:
                         depth = self._daq.start(period_us=cfg.period_us)
                     self._log(
                         f"acquisition started  required_fs={fs:.1f} Hz"
-                        f" (Count(uSec)={cfg.period_us} µs)  "
+                        f" (Count(uSec)={cfg.period_us} µs,"
+                        f" FIFO {cfg.channels} elements/frame)  "
                         f"{self._daq.period_detail}  FIFO depth={depth}. "
                         f"Wall-clock rate must be near {fs:.1f} Hz."
                     )
@@ -194,7 +199,13 @@ class RtTargetEngine:
         }
         last_dio = {g.ttl_dio: False for g in groups}
         follow = (
-            RateFollow(fs, cfg.epoch_sec, epoch_n, period_us=cfg.period_us)
+            RateFollow(
+                fs,
+                cfg.epoch_sec,
+                epoch_n,
+                period_us=cfg.period_us,
+                frame_width=cfg.channels,
+            )
             if self._daq is not None
             else None
         )

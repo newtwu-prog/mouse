@@ -14,7 +14,7 @@ from fpga_daq import DEFAULT_CHANNELS, FpgaDaq
 from processing.groups import GroupSetting
 from processing.runtime import GroupRuntime
 from processing.state import StateScorer
-from timebase import RateFollow
+from timebase import RateFollow, ai_outside_frame
 
 
 @dataclass
@@ -127,6 +127,10 @@ class RtEngine:
         cfg = self.config
         groups = self.groups
         fs = 1_000_000.0 / cfg.period_us
+        unfit = ai_outside_frame(groups, cfg.channels)
+        if unfit:
+            self._emit(RtUpdate(kind="error", error=unfit))
+            return
         epoch_n = max(int(round(fs * cfg.epoch_sec)), 8)
         wave_n = max(int(round(fs * cfg.wave_sec)), 8)
         samples_per_read = max(cfg.channels * 20, cfg.channels)
@@ -140,7 +144,8 @@ class RtEngine:
                     kind="status",
                     message=(
                         f"acquisition started  required_fs={fs:.1f} Hz"
-                        f" (Count(uSec)={cfg.period_us} µs)  "
+                        f" (Count(uSec)={cfg.period_us} µs,"
+                        f" FIFO {cfg.channels} elements/frame)  "
                         f"{self.daq.period_detail}  "
                         f"state window={cfg.epoch_sec:g}s ({epoch_n} samples)  "
                         f"FIFO depth={depth}. "
@@ -188,7 +193,9 @@ class RtEngine:
             for g in groups
         }
         last_dio = {g.ttl_dio: False for g in groups}
-        follow = RateFollow(fs, cfg.epoch_sec, epoch_n, period_us=cfg.period_us)
+        follow = RateFollow(
+            fs, cfg.epoch_sec, epoch_n, period_us=cfg.period_us, frame_width=cfg.channels
+        )
         pending = np.zeros((0, cfg.channels))
         wave = np.zeros((0, cfg.channels))
         t0 = time.perf_counter()
