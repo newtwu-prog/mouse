@@ -9,13 +9,14 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication
 
 from qt_ui.main_window import MainWindow
-from qt_ui.theme import FONT_FAMILIES, STYLESHEET
+from qt_ui.theme import FONT_FAMILIES, STYLESHEET, apply_light_palette
 
 
 def create_app() -> QApplication:
     pg.setConfigOptions(antialias=True, background="w", foreground="#1e293b")
     app = QApplication.instance() or QApplication(sys.argv)
     app.setStyle("Fusion")
+    apply_light_palette(app)
     app.setStyleSheet(STYLESHEET)
     font = QFont()
     font.setFamilies(list(FONT_FAMILIES))

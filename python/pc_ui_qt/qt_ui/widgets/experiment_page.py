@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from processing.groups import GroupSetting, ai_label
 from protocol.messages import DataPacket, GroupData
-from qt_ui.theme import STATE_COLOR
+from qt_ui.theme import phase_token
 from qt_ui.waves import WaveStore
 from qt_ui.widgets.charts import ExperimentCharts
 from qt_ui.widgets.live_params import LiveParamsPanel
@@ -39,26 +39,43 @@ class GroupCard(QFrame):
         layout.addWidget(self.state)
         layout.addWidget(self.meta)
         layout.addWidget(self.live)
+        self._phase = ""
+        self._phase_updates = 0
         self._apply_color("—")
         self.set_selected(False)
 
     def set_selected(self, selected: bool) -> None:
-        self.setProperty("selected", "true" if selected else "false")
+        flag = "true" if selected else "false"
+        if self.property("selected") == flag:
+            return
+        self.setProperty("selected", flag)
         self.style().unpolish(self)
         self.style().polish(self)
 
     def update_data(self, group: GroupData) -> None:
-        self.state.setText(group.state or "—")
-        self._apply_color(group.state or "—")
-        self.live.setText(
+        state = group.state or "—"
+        if self.state.text() != state:
+            self.state.setText(state)
+        self._apply_color(state)
+        live = (
             f"TTL {'T' if group.ttl else 'F'}     "
             f"Move {group.movement:.4g}     "
             f"θ/δ {group.theta_delta:.3f}"
         )
+        if self.live.text() != live:
+            self.live.setText(live)
 
     def _apply_color(self, state: str) -> None:
-        color = STATE_COLOR.get(state, "#64748b")
-        self.state.setStyleSheet(f"color: {color}; font-size: 20px; font-weight: 700;")
+        phase = phase_token(state)
+        if phase == self._phase:
+            return
+        self._phase = phase
+        self._phase_updates += 1
+        label = self.state
+        label.setProperty("phase", phase)
+        style = label.style()
+        style.unpolish(label)
+        style.polish(label)
 
 
 class GroupStatusPanel(QFrame):
